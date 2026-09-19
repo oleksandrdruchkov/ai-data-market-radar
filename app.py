@@ -38,7 +38,6 @@ header[data-testid="stHeader"] {
     display: none !important;
 }
 
-/* ЗАГОЛОВОК */
 .app-header {
     font-size: 1.15rem;
     font-weight: 800;
@@ -49,7 +48,6 @@ header[data-testid="stHeader"] {
     margin-bottom: 8px;
 }
 
-/* ВЕРХНІЙ СТАТУС-БАР (2x2 ПЛИТКА) */
 .market-status-box {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -106,7 +104,6 @@ header[data-testid="stHeader"] {
     font-weight: 700;
 }
 
-/* ВІДЖЕТ АВТОНОМНОСТІ ШІ (SAI) ВНИЗУ */
 .sai-card {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -160,7 +157,6 @@ header[data-testid="stHeader"] {
     color: #475569;
 }
 
-/* ТАБИ ТА ГРАФІКИ */
 .stTabs [data-baseweb="tab-list"] {
     gap: 4px !important;
     background-color: transparent !important;
@@ -188,7 +184,7 @@ div[data-testid="stPlotlyChart"] {
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. SUPABASE CONNECTION (SAFE NO-SECRETS)
+# 3. SUPABASE CONNECTION
 # ==========================================
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
@@ -202,64 +198,56 @@ supabase = init_supabase()
 # ==========================================
 # 4. DATA LOADERS
 # ==========================================
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=60)
 def load_data():
-    v_res = supabase.table("fct_vacancies").select("id, region, country_code, is_active").execute()
-    s_res = supabase.table("bridge_vacancy_skills").select("vacancy_id, dim_skills(canonical_name)").execute()
-    b_res = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
+    res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
+    res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
 
-    df_v = pd.DataFrame(v_res.data)
+    df_s = pd.DataFrame(res_skills.data)
+    df_b = pd.DataFrame(res_benchmarks.data)
+    return df_s, df_b
 
-    skills_data = []
-    for r in s_res.data:
-        if r.get("dim_skills"):
-            skills_data.append({
-                "vacancy_id": r["vacancy_id"],
-                "skill_name": r["dim_skills"]["canonical_name"]
-            })
-    df_s = pd.DataFrame(skills_data)
-    df_b = pd.DataFrame(b_res.data)
-
-    return df_v, df_s, df_b
-
-df_v, df_s, df_b = load_data()
+df_skills_raw, df_b = load_data()
 
 # ==========================================
 # 5. HEADER & REGION SELECTOR
 # ==========================================
-st.markdown('<div class="app-header">📡 Market Radar</div>', unsafe_allow_html=True)
+col_hdr, col_reg = st.columns([1.1, 1.3])
+with col_hdr:
+    st.markdown('<div class="app-header">📡 Market Radar</div>', unsafe_allow_html=True)
 
-selected_region = st.selectbox(
-    "Select Region",
-    ["All Regions", "APAC (China)", "EMEA (Europe)", "US"],
-    label_visibility="collapsed"
-)
+with col_reg:
+    selected_region = st.selectbox(
+        "Select Region",
+        ["All Regions", "Europe", "US", "APAC"],
+        label_visibility="collapsed"
+    )
 
-# Filter data
-if not df_v.empty and not df_s.empty:
-    merged = pd.merge(df_s, df_v, left_on="vacancy_id", right_on="id", how="inner")
-    if selected_region == "APAC (China)":
-        merged = merged[merged["region"] == "APAC"]
-    elif selected_region == "EMEA (Europe)":
-        merged = merged[merged["region"] == "EMEA"]
-    elif selected_region == "US":
-        merged = merged[merged["country_code"] == "US"]
+# Фільтрація за вибраним регіоном
+df_filtered = df_skills_raw.copy()
+if not df_filtered.empty and "region" in df_filtered.columns:
+    if selected_region != "All Regions":
+        df_filtered = df_filtered[df_filtered["region"] == selected_region]
+
+# Розрахунок ключових метрик
+if not df_filtered.empty:
+    agg_totals = (
+        df_filtered.groupby("skill_name")["vacancy_count"]
+        .sum()
+        .reset_index()
+        .sort_values(by="vacancy_count", ascending=False)
+    )
+    total_signals = int(agg_totals["vacancy_count"].sum())
+    top_core_name = agg_totals.iloc[0]["skill_name"] if not agg_totals.empty else "N/A"
+    top_core_count = int(agg_totals.iloc[0]["vacancy_count"]) if not agg_totals.empty else 0
+    top_core_pct = int((top_core_count / total_signals * 100)) if total_signals > 0 else 0
 else:
-    merged = pd.DataFrame()
-
-# Dynamic metrics calculation
-total_signals = len(merged) if not merged.empty else 27
-top_core_name = "AWS"
-top_core_pct = 11
-
-if not merged.empty:
-    top_counts = merged["skill_name"].value_counts()
-    if not top_counts.empty:
-        top_core_name = top_counts.index[0]
-        top_core_pct = int((top_counts.iloc[0] / total_signals) * 100)
+    total_signals = 0
+    top_core_name = "N/A"
+    top_core_pct = 0
 
 # ==========================================
-# 6. EXACT STATUS BAR (2x2 GRID)
+# 6. STATUS BAR (2x2 GRID)
 # ==========================================
 st.markdown(f"""
 <div class="market-status-box">
@@ -285,25 +273,25 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 7. TABS & VELOCITY CHART
+# 7. TABS & DEMAND VELOCITY CHART
 # ==========================================
 tab_vel, tab_comp = st.tabs(["🔥 Demand Velocity", "💰"])
 
 with tab_vel:
-    if not merged.empty:
-        agg = merged["skill_name"].value_counts().reset_index()
-        agg.columns = ["skill_name", "vacancy_count"]
-        agg = agg.sort_values(by="vacancy_count", ascending=True).tail(8)
+    if not df_filtered.empty:
+        agg_chart = (
+            df_filtered.groupby("skill_name", as_index=False)["vacancy_count"]
+            .sum()
+            .sort_values(by="vacancy_count", ascending=True)
+            .tail(8)
+        )
     else:
-        agg = pd.DataFrame({
-            "skill_name": ["Airflow", "dbt", "Dagster", "Apache Spark", "Azure", "AWS", "Machine Learning", "Python"],
-            "vacancy_count": [2, 2, 2, 2, 2, 3, 3, 3]
-        })
+        agg_chart = pd.DataFrame(columns=["skill_name", "vacancy_count"])
 
-    chart_height = max(240, len(agg) * 28 + 30)
+    chart_height = max(240, len(agg_chart) * 28 + 30)
 
     fig = px.bar(
-        agg,
+        agg_chart,
         x="vacancy_count",
         y="skill_name",
         orientation="h",
@@ -338,7 +326,7 @@ with tab_vel:
     st.plotly_chart(fig, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
 
 with tab_comp:
-    st.caption("Compensation models based on verified APAC / EMEA bands.")
+    st.caption("Compensation models based on verified APAC / Europe / US bands.")
 
 # ==========================================
 # 8. FRONTIER AI AUTONOMY (SAI) CARD
