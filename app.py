@@ -373,24 +373,8 @@ with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела т�
     * **Cyber & Defensive Capabilities:** Проксі-оцінка аудиту та виправлення коду.
 
     **Математика зведення:**
-    $$SAI = (0.35 \cdot S_{\\text{Reasoning}} + 0.30 \cdot S_{\\text{Coding}} + 0.20 \cdot S_{\\text{Cyber}} + 0.15 \cdot S_{\\text{General}}) \\times M_{\\text{Autonomy}}$$
+    $$SAI = (0.35 \\cdot S_{\\text{Reasoning}} + 0.30 \\cdot S_{\\text{Coding}} + 0.20 \\cdot S_{\\text{Cyber}} + 0.15 \\cdot S_{\\text{General}}) \\times M_{\\text{Autonomy}}$$
 
     * **Множник автономності ($M_{\\text{Autonomy}} = 0.21$):** Логарифмічний горизонт стабільної дії за фреймворком METR ($T_{\\text{horizon}} \\approx 30$ хв).
     * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під регулярним наглядом оператора.
     """)
-```[cite: 9]
-
----
-
-### Як зафіксувати та оновити дашборд у мережі
-
-У терміналі Mac виконайте команди[cite: 1, 9]:
-
-```bash
-cd /Users/apple/ai-data-market-radar
-git add app.py
-git commit -m "style: restore exact compact mobile UI and status bar"
-git push origin main
-```[cite: 1, 9]
-
-Через 15–20 секунд Streamlit Community Cloud автоматично оновить застосунок, повернувши інтерфейс до початкового вигляду зі скриншота[cite: 8, 9].
