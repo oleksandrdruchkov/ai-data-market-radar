@@ -196,7 +196,7 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# 4. DATA LOADERS
+# 4. DATA LOADERS & SAI COMPUTATION
 # ==========================================
 @st.cache_data(ttl=60)
 def load_data():
@@ -205,6 +205,37 @@ def load_data():
 
     df_s = pd.DataFrame(res_skills.data)
     df_b = pd.DataFrame(res_benchmarks.data)
+
+    # Динамічний розрахунок індексу автономності (SAI)
+    if not df_b.empty and "arena_elo" in df_b.columns:
+        # Виключаємо допоміжні/Flash-моделі за наявності основних
+        if "model_name" in df_b.columns and len(df_b) > 1:
+            df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
+
+        elo_norm = ((df_b["arena_elo"] - 1000.0) / 400.0 * 100.0).clip(lower=0, upper=100)
+        
+        # Defense Score (якщо відсутній у схемі, використовуємо середнє Coding + Reasoning)
+        if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
+            defense = df_b["defense_score"]
+        else:
+            c_score = df_b["coding_score"] if "coding_score" in df_b.columns else 80.0
+            r_score = df_b["hard_prompts_score"] if "hard_prompts_score" in df_b.columns else 80.0
+            defense = (c_score * 0.5 + r_score * 0.5)
+
+        hard_p = df_b["hard_prompts_score"] if "hard_prompts_score" in df_b.columns else 80.0
+        coding_s = df_b["coding_score"] if "coding_score" in df_b.columns else 80.0
+
+        raw_test_score = (
+            0.35 * hard_p +
+            0.30 * coding_s +
+            0.20 * defense +
+            0.15 * elo_norm
+        )
+        
+        # Горизонт стабільної дії METR (~30 хв): коефіцієнт 0.21
+        df_b["sai_score"] = (raw_test_score * 0.21).round(1)
+        df_b = df_b.sort_values(by="sai_score", ascending=False)
+
     return df_s, df_b
 
 df_skills_raw, df_b = load_data()
@@ -244,7 +275,7 @@ if not df_filtered.empty:
     top_core_count = int(agg_totals.iloc[0]["vacancy_count"]) if not agg_totals.empty else 0
     top_core_pct = int((top_core_count / total_signals * 100)) if total_signals > 0 else 0
     
-    # Лідер №2 або динамічний рушій (замість захардкодженного Dagster)
+    # Лідер №2 (Velocity Breakout)
     if len(agg_totals) > 1:
         breakout_name = str(agg_totals.iloc[1]["skill_name"])
         breakout_cnt = int(agg_totals.iloc[1]["vacancy_count"])
@@ -342,10 +373,17 @@ with tab_comp:
     st.caption("Compensation models based on verified APAC / Europe / US bands.")
 
 # ==========================================
-# 8. FRONTIER AI AUTONOMY (SAI) CARD
+# 8. FRONTIER AI AUTONOMY (SAI) CARD (ДИНАМІЧНИЙ)
 # ==========================================
-sai_val = 18.6
-leader_model = "Gemini 2.5 Pro"
+if not df_b.empty and "sai_score" in df_b.columns:
+    leader_row = df_b.iloc[0]
+    leader_model = str(leader_row.get("model_name", "Gemini 2.5 Pro"))
+    sai_val = float(leader_row.get("sai_score", 18.6))
+else:
+    sai_val = 18.6
+    leader_model = "Gemini 2.5 Pro"
+
+bar_width = min(max(sai_val, 0.0), 100.0)
 
 st.markdown(f"""
 <div class="sai-card">
@@ -356,7 +394,7 @@ st.markdown(f"""
     <div class="sai-score">{sai_val} <span style="font-size:0.75rem; color:#64748b;">/ 100</span></div>
   </div>
   <div class="sai-progress-bg">
-    <div class="sai-progress-fill" style="width: {sai_val}%;"></div>
+    <div class="sai-progress-fill" style="width: {bar_width}%;"></div>
   </div>
   <div class="sai-footer">
     <span>Leader: <b>{leader_model}</b></span>
@@ -379,3 +417,20 @@ with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела т�
     * **Множник автономності ($M_{\\text{Autonomy}} = 0.21$):** Логарифмічний горизонт стабільної дії за фреймворком METR ($T_{\\text{horizon}} \\approx 30$ хв).
     * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під регулярним наглядом оператора.
     """)
+
+if not df_b.empty and "sai_score" in df_b.columns:
+    with st.expander("📊 Compare Frontier Models (SAI Leaderboard)"):
+        cols_to_show = [c for c in ["model_name", "organization", "sai_score", "arena_elo", "coding_score"] if c in df_b.columns]
+        st.dataframe(
+            df_b[cols_to_show].rename(
+                columns={
+                    "model_name": "Model",
+                    "organization": "Org",
+                    "sai_score": "SAI Score (/100)",
+                    "arena_elo": "Arena Elo",
+                    "coding_score": "Coding %"
+                }
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
