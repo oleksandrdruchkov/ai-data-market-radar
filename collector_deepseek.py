@@ -5,15 +5,19 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from supabase import create_client, Client
 
+# Завантажуємо локальний .env
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SUPABASE_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY").strip()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "[https://npwqiyzmhjypfvrjssxi.supabase.co](https://npwqiyzmhjypfvrjssxi.supabase.co)")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -156,7 +160,8 @@ def run_deepseek_pipeline():
             ).execute()
 
             if fct_res.data:
-                vacancy_id = fct_res.data[0]["id"]
+                v_row = fct_res.data[0]
+                vacancy_id = v_row.get("id") or v_row.get("vacancy_id")
                 bridge_entries = []
                 for s in extracted.get("skills", []):
                     s_name = s.get("name")
