@@ -1,8 +1,10 @@
-name: Scheduled HR Radar Ingestion & Processing
+name: Scheduled Data & AI Intelligence Pipeline
 
 on:
   schedule:
+    # Автоматичний запуск щоночі о 03:00 UTC
     - cron: '0 3 * * *'
+  # Можливість запуску вручну з кнопки в GitHub Actions
   workflow_dispatch:
 
 jobs:
@@ -10,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -22,9 +24,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install requests google-genai supabase pandas python-dotenv
 
-      - name: Run Job Vacancies Ingestion & AI Parsing
+      - name: Run Market Vacancies Pipeline (Adzuna + Gemini)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -34,7 +36,15 @@ jobs:
         run: |
           python main_pipeline.py
 
-      - name: Refresh AI Capability Benchmarks
+      - name: Run DeepSeek Collector (China / Frontier AI)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python collector_deepseek.py
+
+      - name: Refresh AI Benchmarks
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
