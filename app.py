@@ -229,7 +229,7 @@ if not df_filtered.empty and "region" in df_filtered.columns:
     if selected_region != "All Regions":
         df_filtered = df_filtered[df_filtered["region"] == selected_region]
 
-# Розрахунок ключових метрик
+# Розрахунок динамічних метрик
 if not df_filtered.empty:
     agg_totals = (
         df_filtered.groupby("skill_name")["vacancy_count"]
@@ -238,16 +238,29 @@ if not df_filtered.empty:
         .sort_values(by="vacancy_count", ascending=False)
     )
     total_signals = int(agg_totals["vacancy_count"].sum())
+    
+    # Лідер №1 (Dominant Core)
     top_core_name = agg_totals.iloc[0]["skill_name"] if not agg_totals.empty else "N/A"
     top_core_count = int(agg_totals.iloc[0]["vacancy_count"]) if not agg_totals.empty else 0
     top_core_pct = int((top_core_count / total_signals * 100)) if total_signals > 0 else 0
+    
+    # Лідер №2 або динамічний рушій (замість захардкодженного Dagster)
+    if len(agg_totals) > 1:
+        breakout_name = str(agg_totals.iloc[1]["skill_name"])
+        breakout_cnt = int(agg_totals.iloc[1]["vacancy_count"])
+        breakout_badge = f"+{breakout_cnt} signals"
+    else:
+        breakout_name = top_core_name
+        breakout_badge = "High Demand"
 else:
     total_signals = 0
     top_core_name = "N/A"
     top_core_pct = 0
+    breakout_name = "N/A"
+    breakout_badge = "Steady"
 
 # ==========================================
-# 6. STATUS BAR (2x2 GRID)
+# 6. STATUS BAR (2x2 GRID З ДИНАМІЧНИМИ ДАНИМИ)
 # ==========================================
 st.markdown(f"""
 <div class="market-status-box">
@@ -258,7 +271,7 @@ st.markdown(f"""
     </div>
     <div class="status-col">
       <span class="status-label">Velocity Breakout</span>
-      <span class="status-value">Dagster <span class="badge-green">⚡ +45% WoW</span></span>
+      <span class="status-value">{breakout_name} <span class="badge-green">⚡ {breakout_badge}</span></span>
     </div>
     <div class="status-col">
       <span class="status-label">Indexed Signals</span>
@@ -266,7 +279,7 @@ st.markdown(f"""
     </div>
     <div class="status-col">
       <span class="status-label">Feed Status</span>
-      <span class="status-value"><span style="color:#16a34a;">●</span> Live <span style="font-size:0.75rem; color:#64748b; font-weight:500;">(+96)</span></span>
+      <span class="status-value"><span style="color:#16a34a;">●</span> Live <span style="font-size:0.75rem; color:#64748b; font-weight:500;">(+{total_signals})</span></span>
     </div>
   </div>
 </div>
