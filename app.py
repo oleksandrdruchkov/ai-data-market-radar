@@ -202,28 +202,28 @@ supabase = init_supabase()
 def load_data():
     res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
     res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
+    
+    try:
+        res_salaries = supabase.table("v_salary_by_role_market").select("*").execute()
+        df_sal = pd.DataFrame(res_salaries.data)
+    except Exception:
+        df_sal = pd.DataFrame()
 
     df_s = pd.DataFrame(res_skills.data)
     df_b = pd.DataFrame(res_benchmarks.data)
 
-    # Динамічний розрахунок індексу автономності (SAI)
     if not df_b.empty and "arena_elo" in df_b.columns:
-        # Виключаємо допоміжні/Flash-моделі за наявності основних
         if "model_name" in df_b.columns and len(df_b) > 1:
             df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
 
-        elo_norm = ((df_b["arena_elo"] - 1000.0) / 400.0 * 100.0).clip(lower=0, upper=100)
-        
-        # Defense Score (якщо відсутній у схемі, використовуємо середнє Coding + Reasoning)
-        if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
-            defense = df_b["defense_score"]
-        else:
-            c_score = df_b["coding_score"] if "coding_score" in df_b.columns else 80.0
-            r_score = df_b["hard_prompts_score"] if "hard_prompts_score" in df_b.columns else 80.0
-            defense = (c_score * 0.5 + r_score * 0.5)
+        elo_norm = ((df_b["arena_elo"].fillna(1000.0) - 1000.0) / 400.0 * 100.0).clip(lower=0, upper=100)
+        hard_p = df_b["hard_prompts_score"].fillna(80.0) if "hard_prompts_score" in df_b.columns else 80.0
+        coding_s = df_b["coding_score"].fillna(80.0) if "coding_score" in df_b.columns else 80.0
 
-        hard_p = df_b["hard_prompts_score"] if "hard_prompts_score" in df_b.columns else 80.0
-        coding_s = df_b["coding_score"] if "coding_score" in df_b.columns else 80.0
+        if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
+            defense = df_b["defense_score"].fillna((coding_s + hard_p) / 2.0)
+        else:
+            defense = (coding_s + hard_p) / 2.0
 
         raw_test_score = (
             0.35 * hard_p +
@@ -232,13 +232,12 @@ def load_data():
             0.15 * elo_norm
         )
         
-        # Горизонт стабільної дії METR (~30 хв): коефіцієнт 0.21
         df_b["sai_score"] = (raw_test_score * 0.21).round(1)
-        df_b = df_b.sort_values(by="sai_score", ascending=False)
+        df_b = df_b.sort_values(by="sai_score", ascending=False).reset_index(drop=True)
 
-    return df_s, df_b
+    return df_s, df_b, df_sal
 
-df_skills_raw, df_b = load_data()
+df_skills_raw, df_b, df_salaries = load_data()
 
 # ==========================================
 # 5. HEADER & REGION SELECTOR
@@ -254,13 +253,12 @@ with col_reg:
         label_visibility="collapsed"
     )
 
-# Фільтрація за вибраним регіоном
 df_filtered = df_skills_raw.copy()
 if not df_filtered.empty and "region" in df_filtered.columns:
     if selected_region != "All Regions":
-        df_filtered = df_filtered[df_filtered["region"] == selected_region]
+        target_reg = "EU" if selected_region == "Europe" else selected_region
+        df_filtered = df_filtered[df_filtered["region"].isin([selected_region, target_reg])]
 
-# Розрахунок динамічних метрик
 if not df_filtered.empty:
     agg_totals = (
         df_filtered.groupby("skill_name")["vacancy_count"]
@@ -270,12 +268,10 @@ if not df_filtered.empty:
     )
     total_signals = int(agg_totals["vacancy_count"].sum())
     
-    # Лідер №1 (Dominant Core)
     top_core_name = agg_totals.iloc[0]["skill_name"] if not agg_totals.empty else "N/A"
     top_core_count = int(agg_totals.iloc[0]["vacancy_count"]) if not agg_totals.empty else 0
     top_core_pct = int((top_core_count / total_signals * 100)) if total_signals > 0 else 0
     
-    # Лідер №2 (Velocity Breakout)
     if len(agg_totals) > 1:
         breakout_name = str(agg_totals.iloc[1]["skill_name"])
         breakout_cnt = int(agg_totals.iloc[1]["vacancy_count"])
@@ -291,7 +287,7 @@ else:
     breakout_badge = "Steady"
 
 # ==========================================
-# 6. STATUS BAR (2x2 GRID З ДИНАМІЧНИМИ ДАНИМИ)
+# 6. STATUS BAR (2x2 GRID)
 # ==========================================
 st.markdown(f"""
 <div class="market-status-box">
@@ -317,9 +313,9 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 7. TABS & DEMAND VELOCITY CHART
+# 7. TABS (DEMAND VELOCITY & COMPENSATION)
 # ==========================================
-tab_vel, tab_comp = st.tabs(["🔥 Demand Velocity", "💰"])
+tab_vel, tab_comp = st.tabs(["🔥 Demand Velocity", "💰 Compensation"])
 
 with tab_vel:
     if not df_filtered.empty:
@@ -332,7 +328,8 @@ with tab_vel:
     else:
         agg_chart = pd.DataFrame(columns=["skill_name", "vacancy_count"])
 
-    chart_height = max(240, len(agg_chart) * 28 + 30)
+    # Розрахунок висоти з урахуванням витончених барів
+    chart_height = max(220, len(agg_chart) * 26 + 30)
 
     fig = px.bar(
         agg_chart,
@@ -362,26 +359,89 @@ with tab_vel:
         ),
         showlegend=False
     )
+    # Зменшена товщина барів (width=0.42 замість 0.65)
     fig.update_traces(
         textposition="inside",
-        insidetextfont=dict(color="#ffffff", size=10),
-        width=0.65
+        insidetextfont=dict(color="#ffffff", size=9),
+        width=0.42
     )
     st.plotly_chart(fig, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
 
 with tab_comp:
-    st.caption("Compensation models based on verified APAC / Europe / US bands.")
+    if not df_salaries.empty:
+        df_sal_filtered = df_salaries.copy()
+        
+        if "region" in df_sal_filtered.columns and selected_region != "All Regions":
+            target_reg = "EU" if selected_region == "Europe" else selected_region
+            df_sal_filtered = df_sal_filtered[df_sal_filtered["region"].isin([selected_region, target_reg])]
+
+        if not df_sal_filtered.empty and "track" in df_sal_filtered.columns and "median_salary_midpoint" in df_sal_filtered.columns:
+            sal_agg = (
+                df_sal_filtered.groupby(["track", "currency"], as_index=False)["median_salary_midpoint"]
+                .median()
+                .sort_values(by="median_salary_midpoint", ascending=False)
+            )
+
+            fig_sal = px.bar(
+                sal_agg,
+                x="track",
+                y="median_salary_midpoint",
+                color="currency",
+                barmode="group",
+                text="median_salary_midpoint",
+                color_discrete_sequence=["#0284c7", "#16a34a", "#9333ea"]
+            )
+            # Тонші вертикальні колони за рахунок збільшення відступів bargap
+            fig_sal.update_layout(
+                height=250,
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                bargap=0.35,
+                bargroupgap=0.15,
+                font=dict(color="#0f172a", size=10),
+                margin=dict(l=10, r=10, t=15, b=25),
+                xaxis=dict(
+                    title=dict(text="", font=dict(size=1)),
+                    showgrid=False,
+                    tickfont=dict(size=9, color="#0f172a")
+                ),
+                yaxis=dict(
+                    title=dict(text="Median Salary", font=dict(color="#cbd5e1", size=10)),
+                    showgrid=True,
+                    gridcolor="#f8fafc",
+                    tickfont=dict(size=9, color="#64748b")
+                ),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                    title=None,
+                    font=dict(size=9)
+                )
+            )
+            fig_sal.update_traces(
+                texttemplate='%{text:.2s}',
+                textposition='inside',
+                insidetextfont=dict(color="#ffffff", size=9)
+            )
+            st.plotly_chart(fig_sal, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
+        else:
+            st.caption(f"No salary disclosures reported for {selected_region}.")
+    else:
+        st.caption("No salary data available in the database yet.")
 
 # ==========================================
-# 8. FRONTIER AI AUTONOMY (SAI) CARD (ДИНАМІЧНИЙ)
+# 8. FRONTIER AI AUTONOMY (SAI) CARD
 # ==========================================
 if not df_b.empty and "sai_score" in df_b.columns:
     leader_row = df_b.iloc[0]
-    leader_model = str(leader_row.get("model_name", "Gemini 2.5 Pro"))
-    sai_val = float(leader_row.get("sai_score", 18.6))
+    leader_model = str(leader_row.get("model_name", "DeepSeek R1"))
+    sai_val = float(leader_row.get("sai_score", 19.0))
 else:
-    sai_val = 18.6
-    leader_model = "Gemini 2.5 Pro"
+    sai_val = 19.0
+    leader_model = "DeepSeek R1"
 
 bar_width = min(max(sai_val, 0.0), 100.0)
 
