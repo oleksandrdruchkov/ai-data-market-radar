@@ -202,14 +202,14 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# 4. DATA LOADERS & COMPUTATION
+# 4. DATA LOADERS & DYNAMIC MULTIPLIER
 # ==========================================
 @st.cache_data(ttl=60)
 def load_data():
     res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
     res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
 
-    # Завантаження чинного множника автономності
+    # Завантаження динамічного множника автономності
     try:
         res_params = (
             supabase.table("dim_autonomy_parameters")
@@ -435,6 +435,7 @@ if not df_b.empty and "recorded_at" in df_b.columns:
 else:
     data_status_badge = '<span style="color:#ef4444; font-size:0.75rem; font-weight:600;">⚠️ Default Fallback</span>'
 
+# Розрахунок індексу з перевіркою проксі кіберзахисту
 if not df_b.empty:
     if "model_name" in df_b.columns and len(df_b) > 1:
         df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
@@ -494,7 +495,7 @@ if is_stale:
 # ==========================================
 # 9. EXPANDERS: TIMELINE, METHODOLOGY & LEADERBOARD
 # ==========================================
-# 1. Графік історії зміни SAI із ВЕРТИКАЛЬНИМИ анотаціями моделей
+# 1. Графік історії зміни SAI із чіткими вертикальними назвами моделей
 if not df_sai_hist.empty and len(df_sai_hist) > 1:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
         fig_hist = px.line(
@@ -514,7 +515,7 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
             marker=dict(size=8, color="#0369a1")
         )
         
-        # Створення вертикальних підписів (-90 градусів) над кожною точкою
+        # Створення вертикальних підписів (-90 градусів) над кожною точкою (білий контрастний шрифт)
         annotations = []
         for _, row in df_sai_hist.iterrows():
             annotations.append(dict(
@@ -522,19 +523,19 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
                 y=row["leader_sai"],
                 text=str(row["leader_model"]),
                 showarrow=False,
-                yshift=38,
+                yshift=50,
                 textangle=-90,
-                font=dict(size=9, color="#0f172a", family="Inter, sans-serif")
+                font=dict(size=10, color="#f8fafc", family="Inter, -apple-system, sans-serif")
             ))
             
         min_sai = max(0.0, float(df_sai_hist["leader_sai"].min()) - 2.0)
-        max_sai = min(100.0, float(df_sai_hist["leader_sai"].max()) + 6.0)
+        max_sai = min(100.0, float(df_sai_hist["leader_sai"].max()) + 7.5)
         
         fig_hist.update_layout(
             annotations=annotations,
             yaxis_range=[min_sai, max_sai],
-            margin=dict(l=20, r=20, t=55, b=20),
-            height=370,
+            margin=dict(l=20, r=20, t=95, b=20),
+            height=410,
             dragmode="pan",
             xaxis=dict(rangeslider=dict(visible=True, thickness=0.08)),
             yaxis=dict(fixedrange=True, ticksuffix="%")
