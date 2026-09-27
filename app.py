@@ -196,7 +196,7 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# 4. DATA LOADERS & SAI COMPUTATION
+# 4. DATA LOADERS & COMPUTATION
 # ==========================================
 @st.cache_data(ttl=60)
 def load_data():
@@ -482,28 +482,40 @@ if not df_sai_hist.empty:
             x="eval_date",
             y="leader_sai",
             markers=True,
-            text="leader_sai",
+            text="leader_model",
             labels={
                 "eval_date": "Дата",
-                "leader_sai": "SAI Score",
+                "leader_sai": "Індекс SAI (%)",
                 "leader_model": "Флагман",
                 "leader_org": "Компанія"
             },
-            hover_data={"leader_model": True, "leader_org": True}
+            hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
         )
         fig_hist.update_traces(
             textposition="top center",
+            textfont=dict(size=9, color="#0f172a"),
             line_color="#4f46e5",
-            marker=dict(size=7, color="#3730a3")
+            marker=dict(size=8, color="#3730a3")
         )
         fig_hist.update_layout(
-            height=260,
+            height=280,
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             font=dict(color="#0f172a", size=10),
-            margin=dict(l=10, r=10, t=15, b=20),
-            xaxis=dict(showgrid=True, gridcolor="#f8fafc", tickfont=dict(size=9, color="#64748b")),
-            yaxis=dict(showgrid=True, gridcolor="#f8fafc", tickfont=dict(size=9, color="#64748b"))
+            margin=dict(l=10, r=10, t=25, b=20),
+            xaxis=dict(
+                title=dict(text="Дата", font=dict(size=10, color="#64748b")),
+                showgrid=True,
+                gridcolor="#f8fafc",
+                tickfont=dict(size=9, color="#64748b")
+            ),
+            yaxis=dict(
+                title=dict(text="Індекс SAI (%)", font=dict(size=10, color="#64748b")),
+                showgrid=True,
+                gridcolor="#f8fafc",
+                tickfont=dict(size=9, color="#64748b"),
+                ticksuffix="%"
+            )
         )
         st.plotly_chart(fig_hist, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
 
