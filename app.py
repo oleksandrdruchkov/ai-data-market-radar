@@ -237,7 +237,19 @@ def load_data():
 
     return df_s, df_b, df_sal
 
+@st.cache_data(ttl=60)
+def load_sai_history():
+    try:
+        res = supabase.table("v_sai_history").select("*").order("eval_date", desc=False).execute()
+        df = pd.DataFrame(res.data)
+        if not df.empty and "eval_date" in df.columns:
+            df["eval_date"] = pd.to_datetime(df["eval_date"]).dt.strftime("%Y-%m-%d")
+        return df
+    except Exception:
+        return pd.DataFrame()
+
 df_skills_raw, df_b, df_salaries = load_data()
+df_sai_hist = load_sai_history()
 
 # ==========================================
 # 5. HEADER & REGION SELECTOR
@@ -328,7 +340,6 @@ with tab_vel:
     else:
         agg_chart = pd.DataFrame(columns=["skill_name", "vacancy_count"])
 
-    # Розрахунок висоти з урахуванням витончених барів
     chart_height = max(220, len(agg_chart) * 26 + 30)
 
     fig = px.bar(
@@ -359,7 +370,6 @@ with tab_vel:
         ),
         showlegend=False
     )
-    # Зменшена товщина барів (width=0.42 замість 0.65)
     fig.update_traces(
         textposition="inside",
         insidetextfont=dict(color="#ffffff", size=9),
@@ -391,7 +401,6 @@ with tab_comp:
                 text="median_salary_midpoint",
                 color_discrete_sequence=["#0284c7", "#16a34a", "#9333ea"]
             )
-            # Тонші вертикальні колони за рахунок збільшення відступів bargap
             fig_sal.update_layout(
                 height=250,
                 paper_bgcolor="#ffffff",
@@ -462,6 +471,41 @@ st.markdown(f"""
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+# ==========================================
+# 9. SAI TIMELINE & METHODOLOGY EXPANDERS
+# ==========================================
+if not df_sai_hist.empty:
+    with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
+        fig_hist = px.line(
+            df_sai_hist,
+            x="eval_date",
+            y="leader_sai",
+            markers=True,
+            text="leader_sai",
+            labels={
+                "eval_date": "Дата",
+                "leader_sai": "SAI Score",
+                "leader_model": "Флагман",
+                "leader_org": "Компанія"
+            },
+            hover_data={"leader_model": True, "leader_org": True}
+        )
+        fig_hist.update_traces(
+            textposition="top center",
+            line_color="#4f46e5",
+            marker=dict(size=7, color="#3730a3")
+        )
+        fig_hist.update_layout(
+            height=260,
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            font=dict(color="#0f172a", size=10),
+            margin=dict(l=10, r=10, t=15, b=20),
+            xaxis=dict(showgrid=True, gridcolor="#f8fafc", tickfont=dict(size=9, color="#64748b")),
+            yaxis=dict(showgrid=True, gridcolor="#f8fafc", tickfont=dict(size=9, color="#64748b"))
+        )
+        st.plotly_chart(fig_hist, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
 
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
     st.markdown("""
