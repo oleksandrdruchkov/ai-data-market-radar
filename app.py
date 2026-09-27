@@ -383,7 +383,7 @@ with tab_comp:
         
         if "region" in df_sal_filtered.columns and selected_region != "All Regions":
             target_reg = "EU" if selected_region == "Europe" else selected_region
-            df_sal_filtered = df_salfiltered = df_sal_filtered[df_sal_filtered["region"].isin([selected_region, target_reg])]
+            df_sal_filtered = df_sal_filtered[df_sal_filtered["region"].isin([selected_region, target_reg])]
 
         if not df_sal_filtered.empty and "track" in df_sal_filtered.columns and "median_salary_midpoint" in df_sal_filtered.columns:
             sal_agg = (
@@ -473,7 +473,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 9. SAI TIMELINE: ВЕРТИКАЛЬНІ НАЗВИ МОДЕЛЕЙ
+# 9. SAI TIMELINE: МОБІЛЬНЕ ПАНОРАМУВАННЯ ТА X-ZOOM
 # ==========================================
 if not df_sai_hist.empty:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
@@ -491,13 +491,13 @@ if not df_sai_hist.empty:
             hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
         )
         
-        # Налаштування точок і лінії
+        # Точки та лінії
         fig_hist.update_traces(
             line_color="#4f46e5",
             marker=dict(size=8, color="#3730a3")
         )
         
-        # Створення вертикальних текстових анотацій над кожною точкою
+        # Вертикальні анотації лідерів над точками
         annotations = []
         for _, row in df_sai_hist.iterrows():
             annotations.append(
@@ -506,45 +506,63 @@ if not df_sai_hist.empty:
                     y=row["leader_sai"],
                     text=f"<b>{row['leader_model']}</b>",
                     showarrow=False,
-                    textangle=-90,             # Вертикальне розташування тексту
-                    yshift=38,                 # Зсув вгору над точкою
+                    textangle=-90,
+                    yshift=38,
                     font=dict(size=9, color="#0f172a")
                 )
             )
 
+        # Стабільні межі для осі Y
+        y_min = max(0.0, float(df_sai_hist["leader_sai"].min()) - 4.0)
+        y_max = float(df_sai_hist["leader_sai"].max()) + 6.0
+
         fig_hist.update_layout(
-            height=320,                        # Додатковий простір для вертикального тексту
+            height=340,
+            dragmode="pan",  # Вмикає плавне перетягування графіку пальцем
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             font=dict(color="#0f172a", size=10),
-            margin=dict(l=10, r=10, t=55, b=20),  # Збільшений відступ зверху t=55
+            margin=dict(l=10, r=10, t=55, b=20),
             annotations=annotations,
             xaxis=dict(
                 title=dict(text="Дата", font=dict(size=10, color="#64748b")),
                 showgrid=True,
                 gridcolor="#f8fafc",
-                tickfont=dict(size=9, color="#64748b")
+                tickfont=dict(size=9, color="#64748b"),
+                rangeslider=dict(visible=True, thickness=0.08),  # Сенсорний повзунок дат
+                type="date"
             ),
             yaxis=dict(
                 title=dict(text="Індекс SAI (%)", font=dict(size=10, color="#64748b")),
+                range=[y_min, y_max],
+                fixedrange=True,  # Захист від зникнення графіку при сенсорному зумі
                 showgrid=True,
                 gridcolor="#f8fafc",
                 tickfont=dict(size=9, color="#64748b"),
                 ticksuffix="%"
             )
         )
-        st.plotly_chart(fig_hist, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
+        
+        st.plotly_chart(
+            fig_hist, 
+            use_container_width=True, 
+            config={
+                'responsive': True, 
+                'scrollZoom': False,
+                'displayModeBar': False
+            }
+        )
 
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
     st.markdown("""
     **Відкриті джерела даних (Public Benchmarks):**
-    * **General Alignment:** LMSYS Chatbot Arena (Elo Rating, нормалізований у діапазон 1000–1400)[cite: 5].
+    * **General Alignment:** LMSYS Chatbot Arena (Elo Rating, нормалізований у діапазон 1000–1400).
     * **Software Engineering & Coding:** SWE-bench / HumanEval (% успішного виконання)[cite: 5].
     * **Complex Reasoning:** Hard Prompts & Multi-step Evals[cite: 5].
     * **Cyber & Defensive Capabilities:** Проксі-оцінка аудиту та виправлення коду[cite: 5].
 
     **Математика зведення:**
-    $$SAI = (0.35 \\cdot S_{\\text{Reasoning}} + 0.30 \\cdot S_{\\text{Coding}} + 0.20 \\cdot S_{\\text{Cyber}} + 0.15 \\cdot S_{\\text{General}}) \\times M_{\\text{Autonomy}}$$[cite: 5]
+    $$SAI = (0.35 \\cdot S_{\\text{Reasoning}} + 0.30 \\cdot S_{\\text{Coding}} + 0.20 \\cdot S_{\\text{Cyber}} + 0.15 \\cdot S_{\\text{General}}) \\times M_{\\text{Autonomy}}$$
 
     * **Множник автономності ($M_{\\text{Autonomy}} = 0.21$):** Логарифмічний горизонт стабільної дії за фреймворком METR ($T_{\\text{horizon}} \\approx 30$ хв)[cite: 5].
     * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під регулярним наглядом оператора[cite: 5].
