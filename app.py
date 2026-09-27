@@ -1,3 +1,4 @@
+%%writefile /Users/apple/ai-data-market-radar/app.py
 import os
 from datetime import datetime, timezone
 import streamlit as st
@@ -190,7 +191,7 @@ div[data-testid="stPlotlyChart"] {
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. SUPABASE CONNECTION (SAFE CREDENTIALS)
+# 3. SUPABASE CONNECTION
 # ==========================================
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
@@ -202,14 +203,14 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# 4. DATA LOADERS & COMPUTATION
+# 4. DATA LOADERS & DYNAMIC MULTIPLIER
 # ==========================================
 @st.cache_data(ttl=60)
 def load_data():
     res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
     res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
 
-    # Завантаження динамічного множника автономності
+    # Завантаження множника автономності з таблиці параметрів
     try:
         res_params = (
             supabase.table("dim_autonomy_parameters")
@@ -226,7 +227,6 @@ def load_data():
     except Exception:
         autonomy_mult, horizon_mins = 0.210, 30.0
 
-    # Завантаження зарплатної вітрини
     try:
         res_salaries = supabase.table("v_salary_by_role_market").select("*").execute()
         df_sal = pd.DataFrame(res_salaries.data)
@@ -274,7 +274,7 @@ if not df_filtered.empty and "region" in df_filtered.columns:
     if selected_region != "All Regions":
         df_filtered = df_filtered[df_filtered["region"] == selected_region]
 
-# Розрахунок метрик активного ринку
+# Розрахунок метрик попиту
 if not df_filtered.empty:
     agg_totals = (
         df_filtered.groupby("skill_name")["vacancy_count"]
@@ -496,7 +496,7 @@ if is_stale:
 # ==========================================
 # 9. EXPANDERS: TIMELINE, METHODOLOGY & LEADERBOARD
 # ==========================================
-# 1. Графік історії зміни SAI
+# 1. Графік історії зміни SAI (без помилки textangle)
 if not df_sai_hist.empty and len(df_sai_hist) > 1:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
         fig_hist = px.line(
@@ -514,12 +514,11 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
         )
         fig_hist.update_traces(
             textposition="top center",
-            textangle=-90,
             line_color="#0284c7",
             marker=dict(size=8, color="#0369a1")
         )
-        min_sai = max(0, df_sai_hist["leader_sai"].min() - 3)
-        max_sai = min(100, df_sai_hist["leader_sai"].max() + 3)
+        min_sai = max(0.0, float(df_sai_hist["leader_sai"].min()) - 3.0)
+        max_sai = min(100.0, float(df_sai_hist["leader_sai"].max()) + 3.0)
         fig_hist.update_layout(
             yaxis_range=[min_sai, max_sai],
             margin=dict(l=20, r=20, t=40, b=20),
@@ -530,7 +529,7 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
         )
         st.plotly_chart(fig_hist, use_container_width=True)
 
-# 2. Розкриття методології
+# 2. Блок методології
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
     st.markdown(f"""
     **Відкриті джерела даних (Public Benchmarks):**
@@ -547,7 +546,7 @@ with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела т�
     * **Рівень ризику:** **ASL-2 (Safe Copilot)** — інструмент під регулярним наглядом оператора.
     """)
 
-# 3. Таблиця порівняння моделей
+# 3. Таблиця лідерборду
 if not df_b.empty and "sai_score" in df_b.columns:
     with st.expander("📊 Compare Frontier Models (SAI Leaderboard)"):
         cols_to_show = [c for c in ["model_name", "organization", "sai_score", "arena_elo", "coding_score"] if c in df_b.columns]
