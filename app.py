@@ -383,7 +383,7 @@ with tab_comp:
         
         if "region" in df_sal_filtered.columns and selected_region != "All Regions":
             target_reg = "EU" if selected_region == "Europe" else selected_region
-            df_sal_filtered = df_sal_filtered[df_sal_filtered["region"].isin([selected_region, target_reg])]
+            df_sal_filtered = df_salfiltered = df_sal_filtered[df_sal_filtered["region"].isin([selected_region, target_reg])]
 
         if not df_sal_filtered.empty and "track" in df_sal_filtered.columns and "median_salary_midpoint" in df_sal_filtered.columns:
             sal_agg = (
@@ -473,7 +473,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 9. SAI TIMELINE & METHODOLOGY EXPANDERS
+# 9. SAI TIMELINE: ВЕРТИКАЛЬНІ НАЗВИ МОДЕЛЕЙ
 # ==========================================
 if not df_sai_hist.empty:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
@@ -482,7 +482,6 @@ if not df_sai_hist.empty:
             x="eval_date",
             y="leader_sai",
             markers=True,
-            text="leader_model",
             labels={
                 "eval_date": "Дата",
                 "leader_sai": "Індекс SAI (%)",
@@ -491,18 +490,35 @@ if not df_sai_hist.empty:
             },
             hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
         )
+        
+        # Налаштування точок і лінії
         fig_hist.update_traces(
-            textposition="top center",
-            textfont=dict(size=9, color="#0f172a"),
             line_color="#4f46e5",
             marker=dict(size=8, color="#3730a3")
         )
+        
+        # Створення вертикальних текстових анотацій над кожною точкою
+        annotations = []
+        for _, row in df_sai_hist.iterrows():
+            annotations.append(
+                dict(
+                    x=row["eval_date"],
+                    y=row["leader_sai"],
+                    text=f"<b>{row['leader_model']}</b>",
+                    showarrow=False,
+                    textangle=-90,             # Вертикальне розташування тексту
+                    yshift=38,                 # Зсув вгору над точкою
+                    font=dict(size=9, color="#0f172a")
+                )
+            )
+
         fig_hist.update_layout(
-            height=280,
+            height=320,                        # Додатковий простір для вертикального тексту
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             font=dict(color="#0f172a", size=10),
-            margin=dict(l=10, r=10, t=25, b=20),
+            margin=dict(l=10, r=10, t=55, b=20),  # Збільшений відступ зверху t=55
+            annotations=annotations,
             xaxis=dict(
                 title=dict(text="Дата", font=dict(size=10, color="#64748b")),
                 showgrid=True,
@@ -522,16 +538,16 @@ if not df_sai_hist.empty:
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
     st.markdown("""
     **Відкриті джерела даних (Public Benchmarks):**
-    * **General Alignment:** LMSYS Chatbot Arena (Elo Rating, нормалізований у діапазон 1000–1400).
-    * **Software Engineering & Coding:** SWE-bench / HumanEval (% успішного виконання).
-    * **Complex Reasoning:** Hard Prompts & Multi-step Evals.
-    * **Cyber & Defensive Capabilities:** Проксі-оцінка аудиту та виправлення коду.
+    * **General Alignment:** LMSYS Chatbot Arena (Elo Rating, нормалізований у діапазон 1000–1400)[cite: 5].
+    * **Software Engineering & Coding:** SWE-bench / HumanEval (% успішного виконання)[cite: 5].
+    * **Complex Reasoning:** Hard Prompts & Multi-step Evals[cite: 5].
+    * **Cyber & Defensive Capabilities:** Проксі-оцінка аудиту та виправлення коду[cite: 5].
 
     **Математика зведення:**
-    $$SAI = (0.35 \\cdot S_{\\text{Reasoning}} + 0.30 \\cdot S_{\\text{Coding}} + 0.20 \\cdot S_{\\text{Cyber}} + 0.15 \\cdot S_{\\text{General}}) \\times M_{\\text{Autonomy}}$$
+    $$SAI = (0.35 \\cdot S_{\\text{Reasoning}} + 0.30 \\cdot S_{\\text{Coding}} + 0.20 \\cdot S_{\\text{Cyber}} + 0.15 \\cdot S_{\\text{General}}) \\times M_{\\text{Autonomy}}$$[cite: 5]
 
-    * **Множник автономності ($M_{\\text{Autonomy}} = 0.21$):** Логарифмічний горизонт стабільної дії за фреймворком METR ($T_{\\text{horizon}} \\approx 30$ хв).
-    * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під регулярним наглядом оператора.
+    * **Множник автономності ($M_{\\text{Autonomy}} = 0.21$):** Логарифмічний горизонт стабільної дії за фреймворком METR ($T_{\\text{horizon}} \\approx 30$ хв)[cite: 5].
+    * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під регулярним наглядом оператора[cite: 5].
     """)
 
 if not df_b.empty and "sai_score" in df_b.columns:
