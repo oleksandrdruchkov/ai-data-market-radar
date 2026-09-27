@@ -203,6 +203,23 @@ def load_data():
     res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
     res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
     
+    # Динамічне підтягування коефіцієнта з таблиці dim_autonomy_parameters
+    try:
+        res_params = (
+            supabase.table("dim_autonomy_parameters")
+            .select("autonomy_multiplier, task_horizon_minutes")
+            .order("effective_date", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res_params.data and len(res_params.data) > 0:
+            autonomy_mult = float(res_params.data[0]["autonomy_multiplier"])
+            horizon_mins = float(res_params.data[0]["task_horizon_minutes"])
+        else:
+            autonomy_mult, horizon_mins = 0.210, 30.0
+    except Exception:
+        autonomy_mult, horizon_mins = 0.210, 30.0
+
     try:
         res_salaries = supabase.table("v_salary_by_role_market").select("*").execute()
         df_sal = pd.DataFrame(res_salaries.data)
@@ -232,10 +249,11 @@ def load_data():
             0.15 * elo_norm
         )
         
-        df_b["sai_score"] = (raw_test_score * 0.21).round(1)
+        # Динамічний розрахунок за коефіцієнтом із бази
+        df_b["sai_score"] = (raw_test_score * autonomy_mult).round(1)
         df_b = df_b.sort_values(by="sai_score", ascending=False).reset_index(drop=True)
 
-    return df_s, df_b, df_sal
+    return df_s, df_b, df_sal, autonomy_mult, horizon_mins
 
 @st.cache_data(ttl=60)
 def load_sai_history():
@@ -248,7 +266,7 @@ def load_sai_history():
     except Exception:
         return pd.DataFrame()
 
-df_skills_raw, df_b, df_salaries = load_data()
+df_skills_raw, df_b, df_salaries, active_multiplier, active_horizon = load_data()
 df_sai_hist = load_sai_history()
 
 # ==========================================
@@ -473,7 +491,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 9. SAI TIMELINE: МОБІЛЬНЕ ПАНОРАМУВАННЯ ТА X-ZOOM
+# 9. SAI TIMELINE: ПАНОРАМУВАННЯ ТА ВЕРТИКАЛЬНІ ПІДПИСИ
 # ==========================================
 if not df_sai_hist.empty:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
@@ -491,13 +509,11 @@ if not df_sai_hist.empty:
             hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
         )
         
-        # Точки та лінії
         fig_hist.update_traces(
             line_color="#4f46e5",
             marker=dict(size=8, color="#3730a3")
         )
         
-        # Вертикальні анотації лідерів над точками
         annotations = []
         for _, row in df_sai_hist.iterrows():
             annotations.append(
@@ -512,7 +528,6 @@ if not df_sai_hist.empty:
                 )
             )
 
-        # Стабільні межі для осі Y
         y_min = max(0.0, float(df_sai_hist["leader_sai"].min()) - 4.0)
         y_max = float(df_sai_hist["leader_sai"].max()) + 6.0
 
@@ -529,13 +544,13 @@ if not df_sai_hist.empty:
                 showgrid=True,
                 gridcolor="#f8fafc",
                 tickfont=dict(size=9, color="#64748b"),
-                rangeslider=dict(visible=True, thickness=0.08),  # Сенсорний повзунок дат
+                rangeslider=dict(visible=True, thickness=0.08),
                 type="date"
             ),
             yaxis=dict(
                 title=dict(text="Індекс SAI (%)", font=dict(size=10, color="#64748b")),
                 range=[y_min, y_max],
-                fixedrange=True,  # Захист від зникнення графіку при сенсорному зумі
+                fixedrange=True,  # Захист від зникнення графіку при зумі
                 showgrid=True,
                 gridcolor="#f8fafc",
                 tickfont=dict(size=9, color="#64748b"),
@@ -554,7 +569,7 @@ if not df_sai_hist.empty:
         )
 
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
-    st.markdown("""
+    st.markdown(f"""
     **Відкриті джерела даних (Public Benchmarks):**
     * **General Alignment:** LMSYS Chatbot Arena (Elo Rating, нормалізований у діапазон 1000–1400).
     * **Software Engineering & Coding:** SWE-bench / HumanEval (% успішного виконання)[cite: 5].
@@ -562,10 +577,10 @@ with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела т�
     * **Cyber & Defensive Capabilities:** Проксі-оцінка аудиту та виправлення коду[cite: 5].
 
     **Математика зведення:**
-    $$SAI = (0.35 \\cdot S_{\\text{Reasoning}} + 0.30 \\cdot S_{\\text{Coding}} + 0.20 \\cdot S_{\\text{Cyber}} + 0.15 \\cdot S_{\\text{General}}) \\times M_{\\text{Autonomy}}$$
+    $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Coding}}}} + 0.20 \\cdot S_{{\\text{{Cyber}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
 
-    * **Множник автономності ($M_{\\text{Autonomy}} = 0.21$):** Логарифмічний горизонт стабільної дії за фреймворком METR ($T_{\\text{horizon}} \\approx 30$ хв)[cite: 5].
-    * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під регулярним наглядом оператора[cite: 5].
+    * **Діючий множник ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):** Динамічно зчитується з таблиці `dim_autonomy_parameters` (стабільний логарифмічний горизонт $T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ хв за стандартом METR)[cite: 5].
+    * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під наглядом оператора[cite: 5].
     """)
 
 if not df_b.empty and "sai_score" in df_b.columns:
