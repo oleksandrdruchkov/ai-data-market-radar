@@ -202,13 +202,14 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# 4. DATA LOADERS & DYNAMIC MULTIPLIER
+# 4. DATA LOADERS & COMPUTATION
 # ==========================================
 @st.cache_data(ttl=60)
 def load_data():
     res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
     res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
 
+    # Завантаження чинного множника автономності
     try:
         res_params = (
             supabase.table("dim_autonomy_parameters")
@@ -266,11 +267,13 @@ with col_reg:
         label_visibility="collapsed"
     )
 
+# Фільтрація ринкових даних
 df_filtered = df_skills_raw.copy()
 if not df_filtered.empty and "region" in df_filtered.columns:
     if selected_region != "All Regions":
         df_filtered = df_filtered[df_filtered["region"] == selected_region]
 
+# Розрахунок метрик активного ринку
 if not df_filtered.empty:
     agg_totals = (
         df_filtered.groupby("skill_name")["vacancy_count"]
@@ -491,6 +494,7 @@ if is_stale:
 # ==========================================
 # 9. EXPANDERS: TIMELINE, METHODOLOGY & LEADERBOARD
 # ==========================================
+# 1. Графік історії зміни SAI із ВЕРТИКАЛЬНИМИ анотаціями моделей
 if not df_sai_hist.empty and len(df_sai_hist) > 1:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
         fig_hist = px.line(
@@ -498,7 +502,6 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
             x="eval_date",
             y="leader_sai",
             markers=True,
-            text="leader_model",
             title="Динаміка Frontier AI Autonomy (SAI Score)",
             labels={
                 "eval_date": "Дата вимірювання",
@@ -507,22 +510,38 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
             hover_data={"leader_model": True, "leader_org": True, "current_multiplier": True}
         )
         fig_hist.update_traces(
-            textposition="top center",
             line_color="#0284c7",
             marker=dict(size=8, color="#0369a1")
         )
-        min_sai = max(0.0, float(df_sai_hist["leader_sai"].min()) - 3.0)
-        max_sai = min(100.0, float(df_sai_hist["leader_sai"].max()) + 3.0)
+        
+        # Створення вертикальних підписів (-90 градусів) над кожною точкою
+        annotations = []
+        for _, row in df_sai_hist.iterrows():
+            annotations.append(dict(
+                x=row["eval_date"],
+                y=row["leader_sai"],
+                text=str(row["leader_model"]),
+                showarrow=False,
+                yshift=38,
+                textangle=-90,
+                font=dict(size=9, color="#0f172a", family="Inter, sans-serif")
+            ))
+            
+        min_sai = max(0.0, float(df_sai_hist["leader_sai"].min()) - 2.0)
+        max_sai = min(100.0, float(df_sai_hist["leader_sai"].max()) + 6.0)
+        
         fig_hist.update_layout(
+            annotations=annotations,
             yaxis_range=[min_sai, max_sai],
-            margin=dict(l=20, r=20, t=40, b=20),
-            height=340,
+            margin=dict(l=20, r=20, t=55, b=20),
+            height=370,
             dragmode="pan",
             xaxis=dict(rangeslider=dict(visible=True, thickness=0.08)),
             yaxis=dict(fixedrange=True, ticksuffix="%")
         )
         st.plotly_chart(fig_hist, use_container_width=True)
 
+# 2. Блок методології
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
     st.markdown(f"""
     **Відкриті джерела даних (Public Benchmarks):**
@@ -539,6 +558,7 @@ with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела т�
     * **Рівень ризику:** **ASL-2 (Safe Copilot)** — інструмент під регулярним наглядом оператора.
     """)
 
+# 3. Таблиця лідерборду
 if not df_b.empty and "sai_score" in df_b.columns:
     with st.expander("📊 Compare Frontier Models (SAI Leaderboard)"):
         cols_to_show = [c for c in ["model_name", "organization", "sai_score", "arena_elo", "coding_score"] if c in df_b.columns]
