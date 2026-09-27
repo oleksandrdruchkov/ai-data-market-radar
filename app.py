@@ -1,4 +1,3 @@
-%%writefile /Users/apple/ai-data-market-radar/app.py
 import os
 from datetime import datetime, timezone
 import streamlit as st
@@ -210,7 +209,6 @@ def load_data():
     res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
     res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
 
-    # Завантаження множника автономності з таблиці параметрів
     try:
         res_params = (
             supabase.table("dim_autonomy_parameters")
@@ -268,13 +266,11 @@ with col_reg:
         label_visibility="collapsed"
     )
 
-# Фільтрація ринкових даних
 df_filtered = df_skills_raw.copy()
 if not df_filtered.empty and "region" in df_filtered.columns:
     if selected_region != "All Regions":
         df_filtered = df_filtered[df_filtered["region"] == selected_region]
 
-# Розрахунок метрик попиту
 if not df_filtered.empty:
     agg_totals = (
         df_filtered.groupby("skill_name")["vacancy_count"]
@@ -436,7 +432,6 @@ if not df_b.empty and "recorded_at" in df_b.columns:
 else:
     data_status_badge = '<span style="color:#ef4444; font-size:0.75rem; font-weight:600;">⚠️ Default Fallback</span>'
 
-# Розрахунок індексу з перевіркою проксі кіберзахисту
 if not df_b.empty:
     if "model_name" in df_b.columns and len(df_b) > 1:
         df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
@@ -496,7 +491,6 @@ if is_stale:
 # ==========================================
 # 9. EXPANDERS: TIMELINE, METHODOLOGY & LEADERBOARD
 # ==========================================
-# 1. Графік історії зміни SAI (без помилки textangle)
 if not df_sai_hist.empty and len(df_sai_hist) > 1:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
         fig_hist = px.line(
@@ -529,7 +523,6 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
         )
         st.plotly_chart(fig_hist, use_container_width=True)
 
-# 2. Блок методології
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
     st.markdown(f"""
     **Відкриті джерела даних (Public Benchmarks):**
@@ -546,7 +539,6 @@ with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела т�
     * **Рівень ризику:** **ASL-2 (Safe Copilot)** — інструмент під регулярним наглядом оператора.
     """)
 
-# 3. Таблиця лідерборду
 if not df_b.empty and "sai_score" in df_b.columns:
     with st.expander("📊 Compare Frontier Models (SAI Leaderboard)"):
         cols_to_show = [c for c in ["model_name", "organization", "sai_score", "arena_elo", "coding_score"] if c in df_b.columns]
