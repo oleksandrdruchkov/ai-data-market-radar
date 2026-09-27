@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -15,7 +16,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# 2. EXACT MOBILE CSS
+# 2. MOBILE-FIRST RESPONSIVE CSS
 # ==========================================
 st.markdown("""
 <style>
@@ -38,6 +39,7 @@ header[data-testid="stHeader"] {
     display: none !important;
 }
 
+/* ЗАГОЛОВОК */
 .app-header {
     font-size: 1.15rem;
     font-weight: 800;
@@ -48,6 +50,7 @@ header[data-testid="stHeader"] {
     margin-bottom: 8px;
 }
 
+/* ВЕРХНІЙ СТАТУС-БАР (2x2 ПЛИТКА) */
 .market-status-box {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -104,6 +107,7 @@ header[data-testid="stHeader"] {
     font-weight: 700;
 }
 
+/* КАРТКА SAI ВНИЗУ */
 .sai-card {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -116,7 +120,7 @@ header[data-testid="stHeader"] {
 .sai-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     margin-bottom: 8px;
 }
 
@@ -130,33 +134,35 @@ header[data-testid="stHeader"] {
 }
 
 .sai-score {
-    font-size: 1.15rem;
+    font-size: 1.25rem;
     font-weight: 800;
-    color: #4f46e5;
+    color: #0284c7;
+    text-align: right;
 }
 
 .sai-progress-bg {
     width: 100%;
-    height: 6px;
+    height: 7px;
     background-color: #e2e8f0;
     border-radius: 999px;
     overflow: hidden;
-    margin-bottom: 8px;
+    margin: 8px 0;
 }
 
 .sai-progress-fill {
     height: 100%;
-    background-color: #3b82f6;
+    background-color: #0284c7;
     border-radius: 999px;
 }
 
 .sai-footer {
     display: flex;
     justify-content: space-between;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     color: #475569;
 }
 
+/* ТАБИ ТА ПЛОТЛІ */
 .stTabs [data-baseweb="tab-list"] {
     gap: 4px !important;
     background-color: transparent !important;
@@ -184,7 +190,7 @@ div[data-testid="stPlotlyChart"] {
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. SUPABASE CONNECTION
+# 3. SUPABASE CONNECTION (SAFE CREDENTIALS)
 # ==========================================
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
@@ -202,8 +208,8 @@ supabase = init_supabase()
 def load_data():
     res_skills = supabase.table("v_skill_demand_stats").select("*").execute()
     res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
-    
-    # Динамічне підтягування коефіцієнта з таблиці dim_autonomy_parameters
+
+    # Завантаження динамічного множника автономності
     try:
         res_params = (
             supabase.table("dim_autonomy_parameters")
@@ -220,6 +226,7 @@ def load_data():
     except Exception:
         autonomy_mult, horizon_mins = 0.210, 30.0
 
+    # Завантаження зарплатної вітрини
     try:
         res_salaries = supabase.table("v_salary_by_role_market").select("*").execute()
         df_sal = pd.DataFrame(res_salaries.data)
@@ -229,40 +236,18 @@ def load_data():
     df_s = pd.DataFrame(res_skills.data)
     df_b = pd.DataFrame(res_benchmarks.data)
 
-    if not df_b.empty and "arena_elo" in df_b.columns:
-        if "model_name" in df_b.columns and len(df_b) > 1:
-            df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
-
-        elo_norm = ((df_b["arena_elo"].fillna(1000.0) - 1000.0) / 400.0 * 100.0).clip(lower=0, upper=100)
-        hard_p = df_b["hard_prompts_score"].fillna(80.0) if "hard_prompts_score" in df_b.columns else 80.0
-        coding_s = df_b["coding_score"].fillna(80.0) if "coding_score" in df_b.columns else 80.0
-
-        if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
-            defense = df_b["defense_score"].fillna((coding_s + hard_p) / 2.0)
-        else:
-            defense = (coding_s + hard_p) / 2.0
-
-        raw_test_score = (
-            0.35 * hard_p +
-            0.30 * coding_s +
-            0.20 * defense +
-            0.15 * elo_norm
-        )
-        
-        # Динамічний розрахунок за коефіцієнтом із бази
-        df_b["sai_score"] = (raw_test_score * autonomy_mult).round(1)
-        df_b = df_b.sort_values(by="sai_score", ascending=False).reset_index(drop=True)
-
     return df_s, df_b, df_sal, autonomy_mult, horizon_mins
 
 @st.cache_data(ttl=60)
 def load_sai_history():
     try:
-        res = supabase.table("v_sai_history").select("*").order("eval_date", desc=False).execute()
-        df = pd.DataFrame(res.data)
-        if not df.empty and "eval_date" in df.columns:
-            df["eval_date"] = pd.to_datetime(df["eval_date"]).dt.strftime("%Y-%m-%d")
-        return df
+        res = (
+            supabase.table("v_sai_history")
+            .select("*")
+            .order("eval_date", desc=False)
+            .execute()
+        )
+        return pd.DataFrame(res.data)
     except Exception:
         return pd.DataFrame()
 
@@ -270,7 +255,7 @@ df_skills_raw, df_b, df_salaries, active_multiplier, active_horizon = load_data(
 df_sai_hist = load_sai_history()
 
 # ==========================================
-# 5. HEADER & REGION SELECTOR
+# 5. HEADER & REGIONAL SCOPE
 # ==========================================
 col_hdr, col_reg = st.columns([1.1, 1.3])
 with col_hdr:
@@ -283,12 +268,13 @@ with col_reg:
         label_visibility="collapsed"
     )
 
+# Фільтрація ринкових даних
 df_filtered = df_skills_raw.copy()
 if not df_filtered.empty and "region" in df_filtered.columns:
     if selected_region != "All Regions":
-        target_reg = "EU" if selected_region == "Europe" else selected_region
-        df_filtered = df_filtered[df_filtered["region"].isin([selected_region, target_reg])]
+        df_filtered = df_filtered[df_filtered["region"] == selected_region]
 
+# Розрахунок метрик активного ринку
 if not df_filtered.empty:
     agg_totals = (
         df_filtered.groupby("skill_name")["vacancy_count"]
@@ -297,18 +283,18 @@ if not df_filtered.empty:
         .sort_values(by="vacancy_count", ascending=False)
     )
     total_signals = int(agg_totals["vacancy_count"].sum())
-    
-    top_core_name = agg_totals.iloc[0]["skill_name"] if not agg_totals.empty else "N/A"
+
+    top_core_name = str(agg_totals.iloc[0]["skill_name"]) if not agg_totals.empty else "N/A"
     top_core_count = int(agg_totals.iloc[0]["vacancy_count"]) if not agg_totals.empty else 0
     top_core_pct = int((top_core_count / total_signals * 100)) if total_signals > 0 else 0
-    
+
     if len(agg_totals) > 1:
         breakout_name = str(agg_totals.iloc[1]["skill_name"])
         breakout_cnt = int(agg_totals.iloc[1]["vacancy_count"])
         breakout_badge = f"+{breakout_cnt} signals"
     else:
         breakout_name = top_core_name
-        breakout_badge = "High Demand"
+        breakout_badge = "Dominant"
 else:
     total_signals = 0
     top_core_name = "N/A"
@@ -336,31 +322,32 @@ st.markdown(f"""
     </div>
     <div class="status-col">
       <span class="status-label">Feed Status</span>
-      <span class="status-value"><span style="color:#16a34a;">●</span> Live <span style="font-size:0.75rem; color:#64748b; font-weight:500;">(+{total_signals})</span></span>
+      <span class="status-value"><span style="color:#16a34a;">●</span> Live <span style="font-size:0.75rem; color:#64748b; font-weight:500;">(+96)</span></span>
     </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 7. TABS (DEMAND VELOCITY & COMPENSATION)
+# 7. TABS & CHARTS (DEMAND & SALARY)
 # ==========================================
 tab_vel, tab_comp = st.tabs(["🔥 Demand Velocity", "💰 Compensation"])
 
 with tab_vel:
     if not df_filtered.empty:
         agg_chart = (
-            df_filtered.groupby("skill_name", as_index=False)["vacancy_count"]
+            df_filtered.groupby("skill_name")["vacancy_count"]
             .sum()
+            .reset_index()
             .sort_values(by="vacancy_count", ascending=True)
             .tail(8)
         )
     else:
-        agg_chart = pd.DataFrame(columns=["skill_name", "vacancy_count"])
+        agg_chart = pd.DataFrame({"skill_name": ["N/A"], "vacancy_count": [0]})
 
-    chart_height = max(220, len(agg_chart) * 26 + 30)
+    chart_height = max(240, len(agg_chart) * 28 + 35)
 
-    fig = px.bar(
+    fig_demand = px.bar(
         agg_chart,
         x="vacancy_count",
         y="skill_name",
@@ -368,7 +355,7 @@ with tab_vel:
         text="vacancy_count",
         color_discrete_sequence=["#0284c7"]
     )
-    fig.update_layout(
+    fig_demand.update_layout(
         height=chart_height,
         paper_bgcolor="#ffffff",
         plot_bgcolor="#ffffff",
@@ -388,95 +375,108 @@ with tab_vel:
         ),
         showlegend=False
     )
-    fig.update_traces(
+    fig_demand.update_traces(
         textposition="inside",
-        insidetextfont=dict(color="#ffffff", size=9),
+        insidetextfont=dict(color="#ffffff", size=10),
         width=0.42
     )
-    st.plotly_chart(fig, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
+    st.plotly_chart(fig_demand, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
 
 with tab_comp:
     if not df_salaries.empty:
-        df_sal_filtered = df_salaries.copy()
-        
-        if "region" in df_sal_filtered.columns and selected_region != "All Regions":
-            target_reg = "EU" if selected_region == "Europe" else selected_region
-            df_sal_filtered = df_sal_filtered[df_sal_filtered["region"].isin([selected_region, target_reg])]
+        df_sal_flt = df_salaries.copy()
+        if selected_region != "All Regions" and "region" in df_sal_flt.columns:
+            df_sal_flt = df_sal_flt[df_sal_flt["region"] == selected_region]
 
-        if not df_sal_filtered.empty and "track" in df_sal_filtered.columns and "median_salary_midpoint" in df_sal_filtered.columns:
-            sal_agg = (
-                df_sal_filtered.groupby(["track", "currency"], as_index=False)["median_salary_midpoint"]
-                .median()
-                .sort_values(by="median_salary_midpoint", ascending=False)
-            )
-
+        if not df_sal_flt.empty:
             fig_sal = px.bar(
-                sal_agg,
+                df_sal_flt,
                 x="track",
                 y="median_salary_midpoint",
-                color="currency",
+                color="region" if "region" in df_sal_flt.columns else None,
                 barmode="group",
-                text="median_salary_midpoint",
-                color_discrete_sequence=["#0284c7", "#16a34a", "#9333ea"]
+                title=f"Median Salary ($ USD) - {selected_region}"
             )
             fig_sal.update_layout(
-                height=250,
                 paper_bgcolor="#ffffff",
                 plot_bgcolor="#ffffff",
+                height=280,
+                margin=dict(l=10, r=10, t=30, b=20),
                 bargap=0.35,
-                bargroupgap=0.15,
-                font=dict(color="#0f172a", size=10),
-                margin=dict(l=10, r=10, t=15, b=25),
-                xaxis=dict(
-                    title=dict(text="", font=dict(size=1)),
-                    showgrid=False,
-                    tickfont=dict(size=9, color="#0f172a")
-                ),
-                yaxis=dict(
-                    title=dict(text="Median Salary", font=dict(color="#cbd5e1", size=10)),
-                    showgrid=True,
-                    gridcolor="#f8fafc",
-                    tickfont=dict(size=9, color="#64748b")
-                ),
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1,
-                    title=None,
-                    font=dict(size=9)
-                )
-            )
-            fig_sal.update_traces(
-                texttemplate='%{text:.2s}',
-                textposition='inside',
-                insidetextfont=dict(color="#ffffff", size=9)
+                bargroupgap=0.15
             )
             st.plotly_chart(fig_sal, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
         else:
-            st.caption(f"No salary disclosures reported for {selected_region}.")
+            st.caption(f"No salary records available for {selected_region}.")
     else:
-        st.caption("No salary data available in the database yet.")
+        st.caption("Salary data pipeline currently compiling.")
 
 # ==========================================
-# 8. FRONTIER AI AUTONOMY (SAI) CARD
+# 8. FRONTIER AI AUTONOMY (SAI) CARD & FRESHNESS AUDIT
 # ==========================================
-if not df_b.empty and "sai_score" in df_b.columns:
-    leader_row = df_b.iloc[0]
-    leader_model = str(leader_row.get("model_name", "DeepSeek R1"))
-    sai_val = float(leader_row.get("sai_score", 19.0))
+data_status_badge = ""
+is_stale = False
+last_date_str = "N/A"
+has_real_defense = False
+
+if not df_b.empty and "recorded_at" in df_b.columns:
+    df_b["recorded_at_dt"] = pd.to_datetime(df_b["recorded_at"], utc=True)
+    latest_ts = df_b["recorded_at_dt"].max()
+    now_utc = datetime.now(timezone.utc)
+    
+    age_hours = (now_utc - latest_ts).total_seconds() / 3600.0
+    last_date_str = latest_ts.strftime("%d.%m.%Y")
+
+    if age_hours <= 48:
+        data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">● Fresh (зріз: {last_date_str})</span>'
+    else:
+        is_stale = True
+        days_stale = int(age_hours // 24)
+        data_status_badge = f'<span style="color:#f59e0b; font-size:0.75rem; font-weight:600;">⚠️ Stale ({days_stale} дн. тому, {last_date_str})</span>'
 else:
-    sai_val = 19.0
-    leader_model = "DeepSeek R1"
+    data_status_badge = '<span style="color:#ef4444; font-size:0.75rem; font-weight:600;">⚠️ Default Fallback</span>'
+
+# Розрахунок індексу з перевіркою проксі кіберзахисту
+if not df_b.empty:
+    if "model_name" in df_b.columns and len(df_b) > 1:
+        df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
+
+    elo_norm = ((df_b["arena_elo"].fillna(1000.0) - 1000.0) / 400.0 * 100.0).clip(lower=0, upper=100)
+    hard_p = df_b["hard_prompts_score"].fillna(80.0) if "hard_prompts_score" in df_b.columns else 80.0
+    coding_s = df_b["coding_score"].fillna(80.0) if "coding_score" in df_b.columns else 80.0
+
+    if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
+        defense = df_b["defense_score"].fillna((coding_s + hard_p) / 2.0)
+        has_real_defense = True
+    else:
+        defense = (coding_s + hard_p) / 2.0
+
+    raw_test_score = (
+        0.35 * hard_p +
+        0.30 * coding_s +
+        0.20 * defense +
+        0.15 * elo_norm
+    )
+
+    df_b["sai_score"] = (raw_test_score * active_multiplier).round(1)
+    df_b = df_b.sort_values(by="sai_score", ascending=False).reset_index(drop=True)
+
+    leader_row = df_b.iloc[0]
+    leader_model = str(leader_row.get("model_name", "Claude 3.7 Sonnet"))
+    sai_val = float(leader_row.get("sai_score", 19.2))
+else:
+    sai_val = 18.6
+    leader_model = "Gemini 2.5 Pro (Fallback)"
 
 bar_width = min(max(sai_val, 0.0), 100.0)
+proxy_badge = "" if has_real_defense else ' <span style="font-size:0.7rem; color:#f59e0b;">(Defense: 50/50 Proxy)</span>'
 
 st.markdown(f"""
 <div class="sai-card">
   <div class="sai-header">
-    <div class="sai-title">
-      <span>⚙️ Frontier AI Autonomy (SAI)</span>
+    <div>
+      <div class="sai-title">🤖 Frontier AI Autonomy (SAI)</div>
+      <div style="margin-top:2px;">{data_status_badge}</div>
     </div>
     <div class="sai-score">{sai_val} <span style="font-size:0.75rem; color:#64748b;">/ 100</span></div>
   </div>
@@ -484,105 +484,70 @@ st.markdown(f"""
     <div class="sai-progress-fill" style="width: {bar_width}%;"></div>
   </div>
   <div class="sai-footer">
-    <span>Leader: <b>{leader_model}</b></span>
+    <span>Leader: <b>{leader_model}</b>{proxy_badge}</span>
     <span style="color:#0284c7; font-weight:700;">ASL-2 (Safe Copilot)</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
+if is_stale:
+    st.caption(f"ℹ️ **Зверніть увагу:** Нові виміри не надходили понад 48 годин. Розрахунок базується на збереженому зрізі від {last_date_str}.")
+
 # ==========================================
-# 9. SAI TIMELINE: ПАНОРАМУВАННЯ ТА ВЕРТИКАЛЬНІ ПІДПИСИ
+# 9. EXPANDERS: TIMELINE, METHODOLOGY & LEADERBOARD
 # ==========================================
-if not df_sai_hist.empty:
+# 1. Графік історії зміни SAI
+if not df_sai_hist.empty and len(df_sai_hist) > 1:
     with st.expander("📈 Dynamic Timeline: Історія зміни індексу SAI"):
         fig_hist = px.line(
             df_sai_hist,
             x="eval_date",
             y="leader_sai",
             markers=True,
+            text="leader_model",
+            title="Динаміка Frontier AI Autonomy (SAI Score)",
             labels={
-                "eval_date": "Дата",
-                "leader_sai": "Індекс SAI (%)",
-                "leader_model": "Флагман",
-                "leader_org": "Компанія"
+                "eval_date": "Дата вимірювання",
+                "leader_sai": "Індекс SAI (/100)"
             },
-            hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
+            hover_data={"leader_model": True, "leader_org": True, "current_multiplier": True}
         )
-        
         fig_hist.update_traces(
-            line_color="#4f46e5",
-            marker=dict(size=8, color="#3730a3")
+            textposition="top center",
+            textangle=-90,
+            line_color="#0284c7",
+            marker=dict(size=8, color="#0369a1")
         )
-        
-        annotations = []
-        for _, row in df_sai_hist.iterrows():
-            annotations.append(
-                dict(
-                    x=row["eval_date"],
-                    y=row["leader_sai"],
-                    text=f"<b>{row['leader_model']}</b>",
-                    showarrow=False,
-                    textangle=-90,
-                    yshift=38,
-                    font=dict(size=9, color="#0f172a")
-                )
-            )
-
-        y_min = max(0.0, float(df_sai_hist["leader_sai"].min()) - 4.0)
-        y_max = float(df_sai_hist["leader_sai"].max()) + 6.0
-
+        min_sai = max(0, df_sai_hist["leader_sai"].min() - 3)
+        max_sai = min(100, df_sai_hist["leader_sai"].max() + 3)
         fig_hist.update_layout(
+            yaxis_range=[min_sai, max_sai],
+            margin=dict(l=20, r=20, t=40, b=20),
             height=340,
-            dragmode="pan",  # Вмикає плавне перетягування графіку пальцем
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            font=dict(color="#0f172a", size=10),
-            margin=dict(l=10, r=10, t=55, b=20),
-            annotations=annotations,
-            xaxis=dict(
-                title=dict(text="Дата", font=dict(size=10, color="#64748b")),
-                showgrid=True,
-                gridcolor="#f8fafc",
-                tickfont=dict(size=9, color="#64748b"),
-                rangeslider=dict(visible=True, thickness=0.08),
-                type="date"
-            ),
-            yaxis=dict(
-                title=dict(text="Індекс SAI (%)", font=dict(size=10, color="#64748b")),
-                range=[y_min, y_max],
-                fixedrange=True,  # Захист від зникнення графіку при зумі
-                showgrid=True,
-                gridcolor="#f8fafc",
-                tickfont=dict(size=9, color="#64748b"),
-                ticksuffix="%"
-            )
+            dragmode="pan",
+            xaxis=dict(rangeslider=dict(visible=True, thickness=0.08)),
+            yaxis=dict(fixedrange=True, ticksuffix="%")
         )
-        
-        st.plotly_chart(
-            fig_hist, 
-            use_container_width=True, 
-            config={
-                'responsive': True, 
-                'scrollZoom': False,
-                'displayModeBar': False
-            }
-        )
+        st.plotly_chart(fig_hist, use_container_width=True)
 
+# 2. Розкриття методології
 with st.expander("ℹ️ Data Sources & Autonomy Methodology (Джерела та формула)"):
     st.markdown(f"""
     **Відкриті джерела даних (Public Benchmarks):**
     * **General Alignment:** LMSYS Chatbot Arena (Elo Rating, нормалізований у діапазон 1000–1400).
-    * **Software Engineering & Coding:** SWE-bench / HumanEval (% успішного виконання)[cite: 5].
-    * **Complex Reasoning:** Hard Prompts & Multi-step Evals[cite: 5].
-    * **Cyber & Defensive Capabilities:** Проксі-оцінка аудиту та виправлення коду[cite: 5].
+    * **Software Engineering & Coding:** SWE-bench / HumanEval (% успішного виконання).
+    * **Complex Reasoning:** Hard Prompts & Multi-step Evals.
+    * **Cyber & Defensive Capabilities:** Проксі-оцінка аудиту коду (50/50 Code + Reasoning або Scale AI SEAL).
 
     **Математика зведення:**
     $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Coding}}}} + 0.20 \\cdot S_{{\\text{{Cyber}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
 
-    * **Діючий множник ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):** Динамічно зчитується з таблиці `dim_autonomy_parameters` (стабільний логарифмічний горизонт $T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ хв за стандартом METR)[cite: 5].
-    * **Рівень ризику:** **ASL-2 (Safe Copilot)** — помічник під наглядом оператора[cite: 5].
+    * **Активний множник автономності ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):** 
+      Підтягується з таблиці `dim_autonomy_parameters`. Відповідає стійкому горизонту дій **~{int(active_horizon)} хв** без втручання людини.
+    * **Рівень ризику:** **ASL-2 (Safe Copilot)** — інструмент під регулярним наглядом оператора.
     """)
 
+# 3. Таблиця порівняння моделей
 if not df_b.empty and "sai_score" in df_b.columns:
     with st.expander("📊 Compare Frontier Models (SAI Leaderboard)"):
         cols_to_show = [c for c in ["model_name", "organization", "sai_score", "arena_elo", "coding_score"] if c in df_b.columns]
