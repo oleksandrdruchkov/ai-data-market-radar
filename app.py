@@ -261,7 +261,7 @@ def load_data():
         else:
             agentic = df_b.get("coding_score", 80.0)
 
-        # 3. Стійкість та захист (Defense)
+        # 3. Стійкість та кіберзахист (Defense)
         if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
             defense = df_b["defense_score"].fillna(agentic * 0.5 + reasoning * 0.5)
         else:
@@ -428,7 +428,7 @@ with tab2:
     if not df_salaries_base.empty:
         df_sal_flt = df_salaries_base.copy()
         
-        # Узгодження Europe та коду EU для вітрини зарплат
+        # Узгодження коду "Europe" та "EU" у вітрині заробітних плат
         target_reg = "EU" if selected_region == "Europe" else selected_region
         if selected_region != "All Regions" and "region" in df_sal_flt.columns:
             df_sal_flt = df_sal_flt[df_sal_flt["region"].isin([selected_region, target_reg])]
@@ -540,6 +540,30 @@ st.markdown(f"""
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+# ==========================================
+# 9.1 EARLY RESEARCH SIGNALS (ARXIV RADAR)
+# ==========================================
+try:
+    res_arxiv = supabase.table("fct_arxiv_signals").select("*").order("published_date", desc=True).limit(5).execute()
+    df_arxiv = pd.DataFrame(res_arxiv.data)
+except Exception:
+    df_arxiv = pd.DataFrame()
+
+if not df_arxiv.empty:
+    with st.expander("🔮 ArXiv Early Signals: Predicted Emerging Tech (3–6 Mo. Lead)", expanded=False):
+        for _, row in df_arxiv.iterrows():
+            st.markdown(f"""
+            <div style="padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
+              <div style="font-size: 0.85rem; font-weight: 700; color: #0f172a;">
+                ⚡ <b>{row.get('predicted_skill', 'N/A')}</b> 
+                <span style="font-weight: 400; color: #64748b;">→ {row.get('predicted_role', 'Specialist')}</span>
+              </div>
+              <div style="font-size: 0.75rem; color: #475569; margin-top: 2px;">
+                {row.get('signal_summary', '')}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 # Methodology expander
 with st.expander("ℹ️ Data Sources & Autonomy Methodology"):
