@@ -86,36 +86,49 @@ header[data-testid="stHeader"] {
 
 .badge-blue {
     background: #e0f2fe;
-    color: #0369a1;
+    color: #0284c7;
     font-size: 0.65rem;
     padding: 1px 5px;
     border-radius: 4px;
     font-weight: 700;
 }
 
-/* Tabs: чіткі, контрастні та завжди видимі кнопки */
+/* TABS: ГАРАНТОВАНИЙ СИ HIЙ КОЛІР ДЛЯ ВСІХ ТЕКСТІВ ТА ІКОНОК */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 6px !important;
+    gap: 8px !important;
     background-color: transparent !important;
     padding: 0 !important;
-    margin-bottom: 8px !important;
+    margin-bottom: 10px !important;
+    border-bottom: 1px solid #e2e8f0 !important;
 }
 
 .stTabs [data-baseweb="tab"] {
-    height: 32px !important;
+    height: 34px !important;
     padding: 4px 12px !important;
-    font-size: 0.82rem !important;
-    font-weight: 700 !important;
-    color: #475569 !important;
-    background-color: #f1f5f9 !important;
-    border-radius: 6px !important;
+    background-color: #f8fafc !important;
     border: 1px solid #cbd5e1 !important;
+    border-radius: 6px 6px 0 0 !important;
+    border-bottom: none !important;
 }
 
+/* Єдиний синій колір тексту для обох вкладок на всіх рівнях вкладеності */
+.stTabs [data-baseweb="tab"],
+.stTabs [data-baseweb="tab"] * {
+    color: #0284c7 !important;
+    font-size: 0.85rem !important;
+    font-weight: 700 !important;
+}
+
+/* Активна вкладка отримує контрастний індикатор */
 .stTabs [aria-selected="true"] {
-    background-color: #0284c7 !important;
-    color: #ffffff !important;
+    background-color: #e0f2fe !important;
     border-color: #0284c7 !important;
+    border-bottom: 3px solid #0284c7 !important;
+}
+
+.stTabs [aria-selected="true"] * {
+    color: #0369a1 !important;
+    font-weight: 800 !important;
 }
 
 /* Future Role Cards with Lead-Time Progress */
