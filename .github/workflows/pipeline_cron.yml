@@ -2,9 +2,9 @@ name: Scheduled Data & AI Intelligence Pipeline
 
 on:
   schedule:
-    # Автоматичний запуск щоночі о 03:00 UTC
+    # Щоденний автоматичний запуск о 03:00 UTC
     - cron: '0 3 * * *'
-  # Можливість запуску вручну з кнопки в GitHub Actions
+  # Можливість запуску вручну з вкладки Actions у GitHub
   workflow_dispatch:
 
 jobs:
@@ -50,3 +50,11 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           python fetch_benchmarks.py
+
+      - name: Run ArXiv Research Signals Pipeline
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python collector_arxiv.py
