@@ -93,6 +93,31 @@ header[data-testid="stHeader"] {
     font-weight: 700;
 }
 
+/* Tabs: чіткі, контрастні та завжди видимі кнопки */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 6px !important;
+    background-color: transparent !important;
+    padding: 0 !important;
+    margin-bottom: 8px !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    height: 32px !important;
+    padding: 4px 12px !important;
+    font-size: 0.82rem !important;
+    font-weight: 700 !important;
+    color: #475569 !important;
+    background-color: #f1f5f9 !important;
+    border-radius: 6px !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #0284c7 !important;
+    color: #ffffff !important;
+    border-color: #0284c7 !important;
+}
+
 /* Future Role Cards with Lead-Time Progress */
 .future-role-card {
     background: #ffffff;
@@ -223,29 +248,6 @@ header[data-testid="stHeader"] {
     font-size: 0.68rem;
     color: #64748b;
     font-weight: 500;
-}
-
-/* Tabs & Chart Containers */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 4px !important;
-    background-color: #e2e8f0 !important;
-    padding: 3px !important;
-    border-radius: 8px !important;
-    margin-bottom: 8px !important;
-}
-
-.stTabs [data-baseweb="tab"] {
-    height: 30px !important;
-    padding: 2px 10px !important;
-    font-size: 0.78rem !important;
-    font-weight: 600 !important;
-    color: #334155 !important;
-}
-
-.stTabs [aria-selected="true"] {
-    background-color: #ffffff !important;
-    color: #0284c7 !important;
-    font-weight: 700 !important;
 }
 
 div[data-testid="stPlotlyChart"] {
@@ -390,7 +392,7 @@ L = {
     "status": "FEED STATUS" if is_en else "СТАТУС ФІДУ",
     "live": "Live" if is_en else "Наживо",
     "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Швидкість попиту",
-    "tab_future": "🔮 Future Roles (3–6 Mo.)" if is_en else "🔮 Майбутні ролі (3–6 міс.)",
+    "tab_future": "🔮 Future Roles" if is_en else "🔮 Майбутні ролі",
     "empty_skills": "No matching skills found for" if is_en else "Не знайдено навичок для",
     "empty_arxiv": "ArXiv research pipeline is syncing." if is_en else "Сигнали ArXiv синхронізуються.",
     "future_caption": "⚡ **Leading R&D Indicators (ArXiv)** — Predicted tech stack readiness and commercial hiring lead-time." if is_en else "⚡ **Leading R&D Indicators (ArXiv)** — Прогноз появи комерційних вакансій та стадії готовності технологій.",
@@ -556,7 +558,6 @@ with tab2:
                 stage_label = L["stage_early"]
                 time_est = L["time_6_9"]
 
-            # Розбір двомовного опису з signal_summary
             raw_summary = row.get("signal_summary", "")
             role_display = str(row.get("predicted_role", "Emerging Specialist"))
             desc_display = raw_summary
@@ -570,7 +571,6 @@ with tab2:
                     else:
                         role_display = parsed_json.get("role_ua", role_display)
             except Exception:
-                # Зворотна сумісність зі старими записами
                 if is_en and "Перехід від витратних" in desc_display:
                     desc_display = "Transitioning from costly voxel grids to compact topological latent representations drastically cuts inference cost, accelerating 3D generation for robotics and spatial compute."
                     role_display = "3D Generative AI Engineer"
@@ -581,7 +581,6 @@ with tab2:
                     desc_display = "Radical optimizer memory compression enables full-parameter fine-tuning of 30B+ models on a single GPU, drastically reducing compute infrastructure costs."
                     role_display = "LLM Training Infrastructure Engineer"
                 elif not is_en:
-                    # Українські назви ролей за замовчуванням
                     ua_role_map = {
                         "3D Generative AI Engineer": "3D Генеративний AI-інженер",
                         "Multimodal Agent Systems Engineer": "Інженер мультимодальних агентних систем",
