@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
@@ -382,7 +383,6 @@ with col_lang:
 
 is_en = (selected_lang == "EN")
 
-# I18N Localization Dictionary
 L = {
     "dominant": "DOMINANT CORE" if is_en else "ДОМІНУЮЧЕ ЯДРО",
     "velocity": "VELOCITY BREAKOUT" if is_en else "ПРОРИВ ШВИДКОСТІ",
@@ -406,7 +406,7 @@ L = {
     "sai_leader": "Leader:" if is_en else "Лідер:",
     "sai_fresh": "● Fresh" if is_en else "● Свіжі",
     "sai_stale": "⚠️ Stale" if is_en else "⚠️ Застарілі",
-    "method_expander": "ℹ️️ Data Sources & Autonomy Methodology" if is_en else "ℹ️ Джерела даних та методологія автономності",
+    "method_expander": "ℹ Data Sources & Autonomy Methodology" if is_en else "ℹ️ Джерела даних та методологія автономності",
     "compare_expander": "📊 Compare Frontier Models (SAI Leaderboard)" if is_en else "📊 Порівняння моделей ШІ (SAI Лідерборд)",
     "timeline_expander": "📈 Dynamic Timeline: SAI History" if is_en else "📈 Динамічний таймлайн: Історія SAI"
 }
@@ -556,10 +556,43 @@ with tab2:
                 stage_label = L["stage_early"]
                 time_est = L["time_6_9"]
 
+            # Розбір двомовного опису з signal_summary
+            raw_summary = row.get("signal_summary", "")
+            role_display = str(row.get("predicted_role", "Emerging Specialist"))
+            desc_display = raw_summary
+
+            try:
+                parsed_json = json.loads(raw_summary)
+                if isinstance(parsed_json, dict):
+                    desc_display = parsed_json.get("en" if is_en else "ua", "")
+                    if is_en:
+                        role_display = parsed_json.get("role_en", role_display)
+                    else:
+                        role_display = parsed_json.get("role_ua", role_display)
+            except Exception:
+                # Зворотна сумісність зі старими записами
+                if is_en and "Перехід від витратних" in desc_display:
+                    desc_display = "Transitioning from costly voxel grids to compact topological latent representations drastically cuts inference cost, accelerating 3D generation for robotics and spatial compute."
+                    role_display = "3D Generative AI Engineer"
+                elif is_en and "Побудова зовнішніх систем" in desc_display:
+                    desc_display = "External visual state harness and dynamic agent scaffolding are critical for multimodal models to execute autonomous long-horizon OS and spatial actions."
+                    role_display = "Multimodal Agent Systems Engineer"
+                elif is_en and "Радикальне зменшення пам'яті" in desc_display:
+                    desc_display = "Radical optimizer memory compression enables full-parameter fine-tuning of 30B+ models on a single GPU, drastically reducing compute infrastructure costs."
+                    role_display = "LLM Training Infrastructure Engineer"
+                elif not is_en:
+                    # Українські назви ролей за замовчуванням
+                    ua_role_map = {
+                        "3D Generative AI Engineer": "3D Генеративний AI-інженер",
+                        "Multimodal Agent Systems Engineer": "Інженер мультимодальних агентних систем",
+                        "LLM Training Infrastructure Engineer": "Інженер інфраструктури навчання LLM"
+                    }
+                    role_display = ua_role_map.get(role_display, role_display)
+
             st.markdown(f"""
             <div class="future-role-card">
               <div class="future-role-header">
-                <span class="future-role-title">{row.get('predicted_role', 'Emerging Specialist')}</span>
+                <span class="future-role-title">{role_display}</span>
                 <span class="future-role-badge">{L['market_lead']} {time_est}</span>
               </div>
               <div class="lead-time-wrap">
@@ -572,7 +605,7 @@ with tab2:
                 </div>
               </div>
               <div class="future-skill-tag">⚡ Tech: {row.get('predicted_skill', 'N/A')}</div>
-              <div class="future-role-desc">{row.get('signal_summary', '')}</div>
+              <div class="future-role-desc">{desc_display}</div>
             </div>
             """, unsafe_allow_html=True)
     else:
