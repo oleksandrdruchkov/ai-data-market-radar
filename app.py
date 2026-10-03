@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# 2. ULTRA-COMPACT MOBILE CSS
+# 2. ULTRA-COMPACT MOBILE CSS (ANDROID & IOS COMPATIBLE)
 # ==========================================
 st.markdown("""
 <style>
@@ -93,46 +93,58 @@ header[data-testid="stHeader"] {
     font-weight: 700;
 }
 
-/* TABS: СТАБІЛЬНІ ОДНАКОВІ СИНІ ЗАГОЛОВКИ БЕЗ СТИСКАННЯ */
+/* TABS: ЗАЛІЗНИЙ ФІКС ДЛЯ ANDROID (50% НА 50%, ОДНАКОВІ СИНІ КНОПКИ) */
 .stTabs [data-baseweb="tab-list"] {
     display: flex !important;
-    gap: 12px !important;
+    width: 100% !important;
+    gap: 6px !important;
     background-color: transparent !important;
     padding: 0 !important;
-    margin-bottom: 8px !important;
+    margin-bottom: 10px !important;
     border-bottom: 2px solid #e2e8f0 !important;
 }
 
 .stTabs [data-baseweb="tab"] {
-    flex: 0 1 auto !important;
-    white-space: nowrap !important;
-    height: 36px !important;
-    padding: 6px 12px !important;
-    background-color: transparent !important;
-    border: none !important;
-    border-bottom: 3px solid transparent !important;
+    flex: 1 1 50% !important; /* Кожна вкладка займає рівно половину екрана */
+    min-width: 0 !important;
+    max-width: 50% !important;
+    height: 38px !important;
+    padding: 6px 4px !important;
+    background-color: #f1f5f9 !important;
+    border-radius: 8px 8px 0 0 !important;
+    border: 1px solid #cbd5e1 !important;
+    border-bottom: none !important;
+    text-align: center !important;
+    justify-content: center !important;
+    display: flex !important;
+    align-items: center !important;
 }
 
-/* Примусово синій колір для всього тексту та іконок всередині вкладок */
+/* Єдиний гарантований синій колір тексту для обох вкладок на Android */
 .stTabs [data-baseweb="tab"],
 .stTabs [data-baseweb="tab"] *,
 .stTabs [data-baseweb="tab"] p,
 .stTabs [data-baseweb="tab"] span {
     color: #0284c7 !important;
-    font-size: 0.85rem !important;
+    font-size: 0.82rem !important;
     font-weight: 700 !important;
-    opacity: 1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
 }
 
-/* Активна вкладка отримує чітке підкреслення знизу */
+/* Активна вкладка з контрастною синьою лінією знизу та білим тлом */
 .stTabs [aria-selected="true"] {
+    background-color: #ffffff !important;
+    border-top: 2px solid #0284c7 !important;
+    border-left: 1px solid #0284c7 !important;
+    border-right: 1px solid #0284c7 !important;
     border-bottom: 3px solid #0284c7 !important;
-    background-color: transparent !important;
 }
 
 .stTabs [aria-selected="true"] * {
-    font-weight: 800 !important;
     color: #0369a1 !important;
+    font-weight: 800 !important;
 }
 
 /* Future Role Cards with Lead-Time Progress */
@@ -408,7 +420,7 @@ L = {
     "indexed": "INDEXED SIGNALS" if is_en else "ПРОІНДЕКСОВАНО",
     "status": "FEED STATUS" if is_en else "СТАТУС ФІДУ",
     "live": "Live" if is_en else "Наживо",
-    "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Попит",
+    "tab_demand": "🔥 Demand" if is_en else "🔥 Попит",
     "tab_future": "🔮 Future Roles" if is_en else "🔮 Майбутні ролі",
     "empty_skills": "No matching skills found for" if is_en else "Не знайдено навичок для",
     "empty_arxiv": "ArXiv research pipeline is syncing." if is_en else "Сигнали ArXiv синхронізуються.",
@@ -807,3 +819,17 @@ if not df_sai_hist.empty:
                 'displayModeBar': False
             }
         )
+```[cite: 8, 10]
+
+---
+
+### Як зберегти та перевірити:
+1. Замініть код у файлі `/Users/apple/ai-data-market-radar/app.py`[cite: 10].
+2. Відправте оновлення в Git[cite: 8, 10]:
+   ```bash
+   cd /Users/apple/ai-data-market-radar
+   git add app.py
+   git commit -m "fix(mobile): force equal 50/50 tab widths for Android Chrome"
+   git push origin main
+   ```[cite: 8, 10]
+3. На телефоні Android у браузері оновіть сторінку (або скиньте кеш сайту в меню **⋮** $\to$ **Clear cache**)[cite: 5, 10]. Вкладки стануть рівно 50% на 50% без жодного стискання в один символ[cite: 8].
