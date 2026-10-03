@@ -218,7 +218,7 @@ def load_data():
     except Exception:
         df_h = pd.DataFrame()
 
-    # Load dynamic autonomy multiplier
+    # Завантаження динамічного коефіцієнта автономності
     try:
         res_params = (
             supabase.table("dim_autonomy_parameters")
@@ -235,7 +235,7 @@ def load_data():
     except Exception:
         autonomy_mult, horizon_mins = 0.210, 30.0
 
-    # Load benchmarks
+    # Завантаження бенчмарків моделей
     try:
         res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
         df_b = pd.DataFrame(res_benchmarks.data)
@@ -246,28 +246,28 @@ def load_data():
         if "model_name" in df_b.columns and len(df_b) > 1:
             df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
 
-        # 1. LMSYS Arena Elo Normalization (1000 - 1400 baseline)
+        # Нормалізація LMSYS Arena Elo (шкала 1000 - 1400)
         elo_norm = ((df_b["arena_elo"].fillna(1000.0) - 1000.0) / 400.0 * 100.0).clip(lower=0.0, upper=100.0)
 
-        # 2. Reasoning: Humanity's Last Exam (HLE) with fallback to hard_prompts_score
+        # 1. Складні наукові міркування: HLE (фолбек на hard_prompts)
         if "hle_score" in df_b.columns and df_b["hle_score"].notnull().any():
             reasoning = df_b["hle_score"].fillna(df_b.get("hard_prompts_score", 80.0))
         else:
             reasoning = df_b.get("hard_prompts_score", 80.0)
 
-        # 3. Agentic & OS Engineering: Terminal-Bench with fallback to coding_score
+        # 2. Автономні агенти в ОС: Terminal-Bench (фолбек на coding_score)
         if "terminal_bench_score" in df_b.columns and df_b["terminal_bench_score"].notnull().any():
             agentic = df_b["terminal_bench_score"].fillna(df_b.get("coding_score", 80.0))
         else:
             agentic = df_b.get("coding_score", 80.0)
 
-        # 4. Cyber Defense & Resilience
+        # 3. Стійкість та захист (Defense)
         if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
             defense = df_b["defense_score"].fillna(agentic * 0.5 + reasoning * 0.5)
         else:
             defense = (agentic + reasoning) / 2.0
 
-        # Weighted MCDA Synthesis
+        # Зважена мультикритеріальна формула
         raw_test_score = (
             0.35 * reasoning +
             0.30 * agentic +
@@ -307,20 +307,16 @@ with col_reg:
     )
 
 filtered_skills = df_skills_base.copy()
-filtered_salaries = df_salaries_base.copy()
 
 if selected_region != "All Regions":
-    reg_code = "EU" if selected_region == "Europe" else selected_region
+    target_reg = "EU" if selected_region == "Europe" else selected_region
     if "region" in filtered_skills.columns:
-        filtered_skills = filtered_skills[filtered_skills["region"] == reg_code]
+        filtered_skills = filtered_skills[filtered_skills["region"].isin([selected_region, target_reg])]
     elif not filtered_skills.empty:
         weights = {"US": 0.55, "Europe": 0.30, "APAC": 0.15}
         w = weights.get(selected_region, 1.0)
         filtered_skills["vacancy_count"] = (filtered_skills["vacancy_count"] * w).round().astype(int)
         filtered_skills = filtered_skills[filtered_skills["vacancy_count"] > 0]
-
-    if not filtered_salaries.empty and "region" in filtered_salaries.columns:
-        filtered_salaries = filtered_salaries[filtered_salaries["region"] == reg_code]
 
 # ==========================================
 # 6. SIDEBAR FILTERS
@@ -429,24 +425,69 @@ with tab1:
         st.caption(f"No matching skills found for {selected_region}.")
 
 with tab2:
-    if not filtered_salaries.empty:
-        fig_sal = px.bar(
-            filtered_salaries,
-            x="track",
-            y="median_salary_midpoint",
-            color="currency",
-            barmode="group"
-        )
-        fig_sal = apply_clean_layout(fig_sal, height=240)
-        fig_sal.update_layout(
-            showlegend=True,
-            bargap=0.35,
-            bargroupgap=0.15,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig_sal, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
+    if not df_salaries_base.empty:
+        df_sal_flt = df_salaries_base.copy()
+        
+        # Узгодження Europe та коду EU для вітрини зарплат
+        target_reg = "EU" if selected_region == "Europe" else selected_region
+        if selected_region != "All Regions" and "region" in df_sal_flt.columns:
+            df_sal_flt = df_sal_flt[df_sal_flt["region"].isin([selected_region, target_reg])]
+
+        if not df_sal_flt.empty and "track" in df_sal_flt.columns and "median_salary_midpoint" in df_sal_flt.columns:
+            sal_agg = (
+                df_sal_flt.groupby(["track", "currency"], as_index=False)["median_salary_midpoint"]
+                .median()
+                .sort_values(by="median_salary_midpoint", ascending=False)
+            )
+
+            fig_sal = px.bar(
+                sal_agg,
+                x="track",
+                y="median_salary_midpoint",
+                color="currency",
+                barmode="group",
+                text="median_salary_midpoint",
+                color_discrete_sequence=["#0284c7", "#16a34a", "#9333ea"]
+            )
+            fig_sal.update_layout(
+                height=250,
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                bargap=0.35,
+                bargroupgap=0.15,
+                font=dict(color="#0f172a", size=10),
+                margin=dict(l=10, r=10, t=15, b=25),
+                xaxis=dict(
+                    title=dict(text="", font=dict(size=1)),
+                    showgrid=False,
+                    tickfont=dict(size=9, color="#0f172a")
+                ),
+                yaxis=dict(
+                    title=dict(text="Median Salary", font=dict(color="#cbd5e1", size=10)),
+                    showgrid=True,
+                    gridcolor="#f8fafc",
+                    tickfont=dict(size=9, color="#64748b")
+                ),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                    title=None,
+                    font=dict(size=9)
+                )
+            )
+            fig_sal.update_traces(
+                texttemplate='%{text:.2s}',
+                textposition='inside',
+                insidetextfont=dict(color="#ffffff", size=9)
+            )
+            st.plotly_chart(fig_sal, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
+        else:
+            st.caption(f"No salary disclosures reported for {selected_region}.")
     else:
-        st.caption(f"No salary disclosures reported for {selected_region}.")
+        st.caption("No salary data available in the database yet.")
 
 # ==========================================
 # 9. FRONTIER AI AUTONOMY (SAI) CARD
@@ -536,10 +577,10 @@ if not df_b.empty and "sai_score" in df_b.columns:
         )
 
 # ==========================================
-# 10. SAI TIMELINE: MOBILE PAN & RANGE SLIDER
+# 10. SAI TIMELINE: DYNAMIC HISTORY (ALWAYS EXPANDED)
 # ==========================================
-if not df_sai_hist.empty and len(df_sai_hist) > 1:
-    with st.expander("📈 Dynamic Timeline: SAI History"):
+if not df_sai_hist.empty:
+    with st.expander("📈 Dynamic Timeline: SAI History", expanded=True):
         fig_hist = px.line(
             df_sai_hist,
             x="eval_date",
@@ -569,7 +610,7 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
                     showarrow=False,
                     textangle=-90,
                     yshift=45,
-                    font=dict(size=9, color="#0f172a")
+                    font=dict(size=10, color="#f8fafc", family="Inter, -apple-system, sans-serif")
                 )
             )
 
@@ -577,15 +618,15 @@ if not df_sai_hist.empty and len(df_sai_hist) > 1:
         y_max = float(df_sai_hist["leader_sai"].max()) + 6.0
 
         fig_hist.update_layout(
-            height=350,
+            height=370,
             dragmode="pan",
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             font=dict(color="#0f172a", size=10),
-            margin=dict(l=10, r=10, t=65, b=20),
+            margin=dict(l=10, r=10, t=75, b=20),
             annotations=annotations,
             xaxis=dict(
-                title=dict(text="Date", font=dict(size=10, color="#64748b")),
+                title=dict(text="Evaluation Date", font=dict(size=10, color="#64748b")),
                 showgrid=True,
                 gridcolor="#f8fafc",
                 tickfont=dict(size=9, color="#64748b"),
