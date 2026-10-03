@@ -93,42 +93,46 @@ header[data-testid="stHeader"] {
     font-weight: 700;
 }
 
-/* TABS: ГАРАНТОВАНИЙ СИ HIЙ КОЛІР ДЛЯ ВСІХ ТЕКСТІВ ТА ІКОНОК */
+/* TABS: СТАБІЛЬНІ ОДНАКОВІ СИНІ ЗАГОЛОВКИ БЕЗ СТИСКАННЯ */
 .stTabs [data-baseweb="tab-list"] {
-    gap: 8px !important;
+    display: flex !important;
+    gap: 12px !important;
     background-color: transparent !important;
     padding: 0 !important;
-    margin-bottom: 10px !important;
-    border-bottom: 1px solid #e2e8f0 !important;
+    margin-bottom: 8px !important;
+    border-bottom: 2px solid #e2e8f0 !important;
 }
 
 .stTabs [data-baseweb="tab"] {
-    height: 34px !important;
-    padding: 4px 12px !important;
-    background-color: #f8fafc !important;
-    border: 1px solid #cbd5e1 !important;
-    border-radius: 6px 6px 0 0 !important;
-    border-bottom: none !important;
+    flex: 0 1 auto !important;
+    white-space: nowrap !important;
+    height: 36px !important;
+    padding: 6px 12px !important;
+    background-color: transparent !important;
+    border: none !important;
+    border-bottom: 3px solid transparent !important;
 }
 
-/* Єдиний синій колір тексту для обох вкладок на всіх рівнях вкладеності */
+/* Примусово синій колір для всього тексту та іконок всередині вкладок */
 .stTabs [data-baseweb="tab"],
-.stTabs [data-baseweb="tab"] * {
+.stTabs [data-baseweb="tab"] *,
+.stTabs [data-baseweb="tab"] p,
+.stTabs [data-baseweb="tab"] span {
     color: #0284c7 !important;
     font-size: 0.85rem !important;
     font-weight: 700 !important;
+    opacity: 1 !important;
 }
 
-/* Активна вкладка отримує контрастний індикатор */
+/* Активна вкладка отримує чітке підкреслення знизу */
 .stTabs [aria-selected="true"] {
-    background-color: #e0f2fe !important;
-    border-color: #0284c7 !important;
     border-bottom: 3px solid #0284c7 !important;
+    background-color: transparent !important;
 }
 
 .stTabs [aria-selected="true"] * {
-    color: #0369a1 !important;
     font-weight: 800 !important;
+    color: #0369a1 !important;
 }
 
 /* Future Role Cards with Lead-Time Progress */
@@ -404,7 +408,7 @@ L = {
     "indexed": "INDEXED SIGNALS" if is_en else "ПРОІНДЕКСОВАНО",
     "status": "FEED STATUS" if is_en else "СТАТУС ФІДУ",
     "live": "Live" if is_en else "Наживо",
-    "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Швидкість попиту",
+    "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Попит",
     "tab_future": "🔮 Future Roles" if is_en else "🔮 Майбутні ролі",
     "empty_skills": "No matching skills found for" if is_en else "Не знайдено навичок для",
     "empty_arxiv": "ArXiv research pipeline is syncing." if is_en else "Сигнали ArXiv синхронізуються.",
