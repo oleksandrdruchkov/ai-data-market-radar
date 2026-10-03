@@ -818,18 +818,4 @@ if not df_sai_hist.empty:
                 'scrollZoom': False,
                 'displayModeBar': False
             }
-        )
-```[cite: 8, 10]
-
----
-
-### Як зберегти та перевірити:
-1. Замініть код у файлі `/Users/apple/ai-data-market-radar/app.py`[cite: 10].
-2. Відправте оновлення в Git[cite: 8, 10]:
-   ```bash
-   cd /Users/apple/ai-data-market-radar
-   git add app.py
-   git commit -m "fix(mobile): force equal 50/50 tab widths for Android Chrome"
-   git push origin main
-   ```[cite: 8, 10]
-3. На телефоні Android у браузері оновіть сторінку (або скиньте кеш сайту в меню **⋮** $\to$ **Clear cache**)[cite: 5, 10]. Вкладки стануть рівно 50% на 50% без жодного стискання в один символ[cite: 8].
+        )   
