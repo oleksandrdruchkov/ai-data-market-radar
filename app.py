@@ -92,7 +92,7 @@ header[data-testid="stHeader"] {
     font-weight: 700;
 }
 
-/* Hybrid Future Role Cards with Lead-Time Progress */
+/* Future Role Cards with Lead-Time Progress */
 .future-role-card {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -311,7 +311,7 @@ def load_data():
     except Exception:
         autonomy_mult, horizon_mins = 0.210, 30.0
 
-    # Benchmarks
+    # AI Benchmarks
     try:
         res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
         df_b = pd.DataFrame(res_benchmarks.data)
@@ -366,29 +366,70 @@ df_skills_base, df_arxiv, df_health, df_b, active_multiplier, active_horizon = l
 df_sai_hist = load_sai_history()
 
 # ==========================================
-# 5. HEADER & REGION SCOPE SELECTOR
+# 5. HEADER, LANGUAGE SWITCHER & REGION SCOPE
 # ==========================================
-col_head, col_reg = st.columns([1.1, 1.3])
+col_head, col_lang, col_reg = st.columns([1.1, 0.55, 1.1])
 with col_head:
     st.markdown("<div style='font-weight:800; font-size:1.05rem; color:#0f172a; padding-top:4px;'>📡 Market Radar</div>", unsafe_allow_html=True)
 
-with col_reg:
-    selected_region = st.selectbox(
-        "Region Scope",
-        options=["All Regions", "Europe", "US", "APAC"],
+with col_lang:
+    selected_lang = st.selectbox(
+        "Language",
+        options=["UA", "EN"],
         index=0,
         label_visibility="collapsed"
     )
 
+is_en = (selected_lang == "EN")
+
+# I18N Localization Dictionary
+L = {
+    "dominant": "DOMINANT CORE" if is_en else "ДОМІНУЮЧЕ ЯДРО",
+    "velocity": "VELOCITY BREAKOUT" if is_en else "ПРОРИВ ШВИДКОСТІ",
+    "indexed": "INDEXED SIGNALS" if is_en else "ПРОІНДЕКСОВАНО",
+    "status": "FEED STATUS" if is_en else "СТАТУС ФІДУ",
+    "live": "Live" if is_en else "Наживо",
+    "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Швидкість попиту",
+    "tab_future": "🔮 Future Roles (3–6 Mo.)" if is_en else "🔮 Майбутні ролі (3–6 міс.)",
+    "empty_skills": "No matching skills found for" if is_en else "Не знайдено навичок для",
+    "empty_arxiv": "ArXiv research pipeline is syncing." if is_en else "Сигнали ArXiv синхронізуються.",
+    "future_caption": "⚡ **Leading R&D Indicators (ArXiv)** — Predicted tech stack readiness and commercial hiring lead-time." if is_en else "⚡ **Leading R&D Indicators (ArXiv)** — Прогноз появи комерційних вакансій та стадії готовності технологій.",
+    "market_lead": "⏱️ Market Lead:" if is_en else "⏱️ Публічний ринок:",
+    "stack_readiness": "Stack Readiness:" if is_en else "Готовність стеку:",
+    "stage_high": "🔥 High Momentum (Commercial Hiring)" if is_en else "🔥 High Momentum (Вихід у комерційні вакансії)",
+    "stage_frontier": "⚡ Frontier Lab Adoption" if is_en else "⚡ Frontier Lab Adoption (Найм R&D лабораторій)",
+    "stage_early": "🔬 Early Research Pre-print" if is_en else "🔬 Early Research Pre-print (Фундаментальний алгоритм)",
+    "time_1_3": "~1–3 Months" if is_en else "~1–3 місяці",
+    "time_3_6": "~3–6 Months" if is_en else "~3–6 місяців",
+    "time_6_9": "~6–9 Months" if is_en else "~6–9 місяців",
+    "sai_title": "🤖 Frontier AI Autonomy (SAI)",
+    "sai_leader": "Leader:" if is_en else "Лідер:",
+    "sai_fresh": "● Fresh" if is_en else "● Свіжі",
+    "sai_stale": "⚠️ Stale" if is_en else "⚠️ Застарілі",
+    "method_expander": "ℹ️️ Data Sources & Autonomy Methodology" if is_en else "ℹ️ Джерела даних та методологія автономності",
+    "compare_expander": "📊 Compare Frontier Models (SAI Leaderboard)" if is_en else "📊 Порівняння моделей ШІ (SAI Лідерборд)",
+    "timeline_expander": "📈 Dynamic Timeline: SAI History" if is_en else "📈 Динамічний таймлайн: Історія SAI"
+}
+
+with col_reg:
+    reg_options = ["All Regions", "Europe", "US", "APAC"] if is_en else ["Всі регіони", "Europe", "US", "APAC"]
+    selected_region = st.selectbox(
+        "Region Scope",
+        options=reg_options,
+        index=0,
+        label_visibility="collapsed"
+    )
+
+reg_lookup = "All Regions" if selected_region in ["All Regions", "Всі регіони"] else selected_region
 filtered_skills = df_skills_base.copy()
 
-if selected_region != "All Regions":
-    target_reg = "EU" if selected_region == "Europe" else selected_region
+if reg_lookup != "All Regions":
+    target_reg = "EU" if reg_lookup == "Europe" else reg_lookup
     if "region" in filtered_skills.columns:
-        filtered_skills = filtered_skills[filtered_skills["region"].isin([selected_region, target_reg])]
+        filtered_skills = filtered_skills[filtered_skills["region"].isin([reg_lookup, target_reg])]
     elif not filtered_skills.empty:
         weights = {"US": 0.55, "Europe": 0.30, "APAC": 0.15}
-        w = weights.get(selected_region, 1.0)
+        w = weights.get(reg_lookup, 1.0)
         filtered_skills["vacancy_count"] = (filtered_skills["vacancy_count"] * w).round().astype(int)
         filtered_skills = filtered_skills[filtered_skills["vacancy_count"] > 0]
 
@@ -396,15 +437,15 @@ if selected_region != "All Regions":
 # 6. SIDEBAR FILTERS
 # ==========================================
 with st.sidebar:
-    st.markdown("#### Detailed Filters")
+    st.markdown("#### Filters" if is_en else "#### Фільтри")
     tracks = ["All"] + (sorted(df_skills_base["track"].dropna().unique().tolist()) if not df_skills_base.empty and "track" in df_skills_base.columns else [])
-    selected_track = st.selectbox("Role Track", tracks)
+    selected_track = st.selectbox("Role Track" if is_en else "Напрям ролі", tracks)
 
     levels = ["All"] + (sorted(df_skills_base["experience_level"].dropna().unique().tolist()) if not df_skills_base.empty and "experience_level" in df_skills_base.columns else [])
-    selected_level = st.selectbox("Seniority Scope", levels)
+    selected_level = st.selectbox("Seniority Scope" if is_en else "Рівень досвіду", levels)
 
-    top_n = st.slider("Top Skills", 5, 20, 8)
-    if st.button("🔄 Sync Feed", use_container_width=True):
+    top_n = st.slider("Top Skills" if is_en else "Топ навичок", 5, 20, 8)
+    if st.button("🔄 Sync Feed" if is_en else "🔄 Оновити фід", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -429,20 +470,20 @@ if not filtered_skills.empty and "vacancy_count" in filtered_skills.columns:
 st.markdown(f"""
 <div class="market-status-bar">
   <div class="market-indicator">
-    <span class="indicator-title">Dominant Core ({selected_region})</span>
+    <span class="indicator-title">{L['dominant']} ({reg_lookup})</span>
     <span class="indicator-val">{top_skill_name} <span class="badge-blue">{top_skill_share}%</span></span>
   </div>
   <div class="market-indicator">
-    <span class="indicator-title">Velocity Breakout</span>
+    <span class="indicator-title">{L['velocity']}</span>
     <span class="indicator-val">{velocity_skill} <span class="badge-green">⚡ +45% WoW</span></span>
   </div>
   <div class="market-indicator" style="margin-top:2px;">
-    <span class="indicator-title">Indexed Signals</span>
+    <span class="indicator-title">{L['indexed']}</span>
     <span class="indicator-val">{total_skills:,}</span>
   </div>
   <div class="market-indicator" style="margin-top:2px;">
-    <span class="indicator-title">Feed Status</span>
-    <span class="indicator-val"><span style="color:#16a34a;">●</span> Live <span style="font-size:0.7rem; color:#64748b; font-weight:500;">(+{batch_size})</span></span>
+    <span class="indicator-title">{L['status']}</span>
+    <span class="indicator-val"><span style="color:#16a34a;">●</span> {L['live']} <span style="font-size:0.7rem; color:#64748b; font-weight:500;">(+{batch_size})</span></span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -463,7 +504,7 @@ def apply_clean_layout(fig, height=250):
 # ==========================================
 # 8. MARKET TABS (DEMAND & FUTURE ROLES)
 # ==========================================
-tab1, tab2 = st.tabs(["🔥 Demand Velocity", "🔮 Future Roles (3–6 Mo.)"])
+tab1, tab2 = st.tabs([L["tab_demand"], L["tab_future"]])
 
 with tab1:
     f_chart_skills = filtered_skills.copy()
@@ -496,38 +537,35 @@ with tab1:
         )
         st.plotly_chart(fig_skills, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
     else:
-        st.caption(f"No matching skills found for {selected_region}.")
+        st.caption(f"{L['empty_skills']} {reg_lookup}.")
 
 with tab2:
     if not df_arxiv.empty:
-        st.caption("⚡ **Leading R&D Indicators (ArXiv)** — Прогноз появи комерційних вакансій та стадії готовності технологій.")
-        
-        # Модель оцінки стадії готовності (Readiness & Lead-time estimation)
+        st.caption(L["future_caption"])
         total_items = len(df_arxiv)
         for idx, row in df_arxiv.iterrows():
-            # Динамічна градація зрілості: від ранніх лабораторних препринтів до безпосереднього виходу на ринок
             readiness_pct = int(min(92, max(38, 85 - (idx * (45 // max(1, total_items - 1))))))
             
             if readiness_pct >= 75:
-                stage_label = "🔥 High Momentum (Вихід у комерційні вакансії)"
-                time_est = "~1–3 місяці"
+                stage_label = L["stage_high"]
+                time_est = L["time_1_3"]
             elif readiness_pct >= 55:
-                stage_label = "⚡ Frontier Lab Adoption (Найм провідних R&D лабораторій)"
-                time_est = "~3–6 місяців"
+                stage_label = L["stage_frontier"]
+                time_est = L["time_3_6"]
             else:
-                stage_label = "🔬 Early Research Pre-print (Фундаментальний алгоритм)"
-                time_est = "~6–9 місяців"
+                stage_label = L["stage_early"]
+                time_est = L["time_6_9"]
 
             st.markdown(f"""
             <div class="future-role-card">
               <div class="future-role-header">
                 <span class="future-role-title">{row.get('predicted_role', 'Emerging Specialist')}</span>
-                <span class="future-role-badge">⏱️ Публічний ринок: {time_est}</span>
+                <span class="future-role-badge">{L['market_lead']} {time_est}</span>
               </div>
               <div class="lead-time-wrap">
                 <div class="lead-time-meta">
                   <span>{stage_label}</span>
-                  <span>Готовність стеку: <b>{readiness_pct}%</b></span>
+                  <span>{L['stack_readiness']} <b>{readiness_pct}%</b></span>
                 </div>
                 <div class="lead-time-bg">
                   <div class="lead-time-bar" style="width: {readiness_pct}%;"></div>
@@ -538,7 +576,7 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.caption("ArXiv research signals pipeline is currently syncing.")
+        st.caption(L["empty_arxiv"])
 
 # ==========================================
 # 9. FRONTIER AI AUTONOMY (SAI) CARD
@@ -555,11 +593,11 @@ if not df_b.empty and "recorded_at" in df_b.columns:
     last_date_str = latest_ts.strftime("%d.%m.%Y")
 
     if age_hours <= 48:
-        data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">● Fresh ({last_date_str})</span>'
+        data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
     else:
         is_stale = True
         days_stale = int(age_hours // 24)
-        data_status_badge = f'<span style="color:#f59e0b; font-size:0.75rem; font-weight:600;">⚠️️ Stale ({days_stale}d ago, {last_date_str})</span>'
+        data_status_badge = f'<span style="color:#f59e0b; font-size:0.75rem; font-weight:600;">{L["sai_stale"]} ({days_stale}d ago, {last_date_str})</span>'
 else:
     data_status_badge = '<span style="color:#64748b; font-size:0.75rem; font-weight:600;">● Connected</span>'
 
@@ -577,7 +615,7 @@ st.markdown(f"""
 <div class="sai-card">
   <div class="sai-header">
     <div class="sai-title">
-      <span>🤖 Frontier AI Autonomy (SAI)</span>
+      <span>{L['sai_title']}</span>
       <div style="margin-left:8px; display:inline-block;">{data_status_badge}</div>
     </div>
     <div class="sai-score">{sai_val} <span style="font-size:0.75rem; color:#64748b;">/ 100</span></div>
@@ -586,36 +624,52 @@ st.markdown(f"""
     <div class="sai-progress-bar" style="width: {bar_width}%;"></div>
   </div>
   <div class="sai-meta">
-    <span>Leader: <b>{leader_model}</b></span>
+    <span>{L['sai_leader']} <b>{leader_model}</b></span>
     <span style="color:#0284c7; font-weight:700;">ASL-2 (Safe Copilot)</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
 # Methodology expander
-with st.expander("ℹ️️ Data Sources & Autonomy Methodology"):
-    st.markdown(f"""
-    **Evaluated Frontier Benchmarks:**
-    * **Ph.D.-Level Reasoning (35%):** Humanity's Last Exam (HLE) & Hard Prompts.
-    * **Agentic OS & Terminal Engineering (30%):** Terminal-Bench 2.0 / SWE-bench.
-    * **Cyber Defense & Alignment (20%):** Security Audit & Resilience score.
-    * **General Capability (15%):** LMSYS Chatbot Arena Elo (normalized to 1000–1400 baseline).
+with st.expander(L["method_expander"]):
+    if is_en:
+        st.markdown(f"""
+        **Evaluated Frontier Benchmarks:**
+        * **Ph.D.-Level Reasoning (35%):** Humanity's Last Exam (HLE) & Hard Prompts.
+        * **Agentic OS & Terminal Engineering (30%):** Terminal-Bench 2.0 / SWE-bench.
+        * **Cyber Defense & Alignment (20%):** Security Audit & Resilience score.
+        * **General Capability (15%):** LMSYS Chatbot Arena Elo (normalized to 1000–1400 baseline).
 
-    **Synthesis Formula (MCDA):**
-    $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Agentic}}}} + 0.20 \\cdot S_{{\\text{{Defense}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
+        **Synthesis Formula (MCDA):**
+        $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Agentic}}}} + 0.20 \\cdot S_{{\\text{{Defense}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
 
-    * **Current METR Autonomy Multiplier ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):**
-      Based on continuous stable operation horizon ($T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ mins) relative to closed-loop autonomous execution ($10^7$ mins).
-    * **Safety Classification:** **ASL-2 (Safe Copilot)** — models require active human oversight.
-    """)
+        * **Current METR Autonomy Multiplier ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):**
+          Based on continuous stable operation horizon ($T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ mins) relative to closed-loop autonomous execution ($10^7$ mins).
+        * **Safety Classification:** **ASL-2 (Safe Copilot)** — models require active human oversight.
+        """)
+    else:
+        st.markdown(f"""
+        **Оцінювані бенчмарки передового ШІ:**
+        * **Ph.D.-рівень міркувань (35%):** Humanity's Last Exam (HLE) та Hard Prompts.
+        * **Агентна робота в ОС та терміналі (30%):** Terminal-Bench 2.0 / SWE-bench.
+        * **Кіберзахист та стійкість (20%):** Аудит коду та безпекова стійкість.
+        * **Загальні здібності (15%):** LMSYS Chatbot Arena Elo (нормалізовано до бази 1000–1400).
+
+        **Синтетична формула (MCDA):**
+        $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Agentic}}}} + 0.20 \\cdot S_{{\\text{{Defense}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
+
+        * **Поточний множник автономності METR ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):**
+          Розраховано з горизонту стабільної дії ($T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ хв) відносно повної замкненої автономії ($10^7$ хв).
+        * **Рівень безпеки:** **ASL-2 (Safe Copilot)** — потрібен активний людський нагляд.
+        """)
 
 # Leaderboard expander
 if not df_b.empty and "sai_score" in df_b.columns:
-    with st.expander("📊 Compare Frontier Models (SAI Leaderboard)"):
+    with st.expander(L["compare_expander"]):
         cols_present = [c for c in ["model_name", "organization", "sai_score", "hle_score", "terminal_bench_score", "arena_elo"] if c in df_b.columns]
         rename_map = {
-            "model_name": "Model",
-            "organization": "Org",
+            "model_name": "Model" if is_en else "Модель",
+            "organization": "Org" if is_en else "Організація",
             "sai_score": "SAI (/100)",
             "hle_score": "HLE %",
             "terminal_bench_score": "Terminal-Bench %",
@@ -631,17 +685,17 @@ if not df_b.empty and "sai_score" in df_b.columns:
 # 10. SAI TIMELINE: DYNAMIC HISTORY (ALWAYS EXPANDED)
 # ==========================================
 if not df_sai_hist.empty:
-    with st.expander("📈 Dynamic Timeline: SAI History", expanded=True):
+    with st.expander(L["timeline_expander"], expanded=True):
         fig_hist = px.line(
             df_sai_hist,
             x="eval_date",
             y="leader_sai",
             markers=True,
             labels={
-                "eval_date": "Date",
+                "eval_date": "Date" if is_en else "Дата",
                 "leader_sai": "SAI Score (%)",
-                "leader_model": "Leader Model",
-                "leader_org": "Organization"
+                "leader_model": "Leader Model" if is_en else "Модель-лідер",
+                "leader_org": "Organization" if is_en else "Організація"
             },
             hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
         )
@@ -677,7 +731,7 @@ if not df_sai_hist.empty:
             margin=dict(l=10, r=10, t=75, b=20),
             annotations=annotations,
             xaxis=dict(
-                title=dict(text="Evaluation Date", font=dict(size=10, color="#64748b")),
+                title=dict(text="Evaluation Date" if is_en else "Дата заміру", font=dict(size=10, color="#64748b")),
                 showgrid=True,
                 gridcolor="#f8fafc",
                 tickfont=dict(size=9, color="#64748b"),
