@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# 2. ULTRA-COMPACT MOBILE CSS (ANDROID & IOS COMPATIBLE)
+# 2. ULTRA-COMPACT MOBILE CSS
 # ==========================================
 st.markdown("""
 <style>
@@ -91,60 +91,6 @@ header[data-testid="stHeader"] {
     padding: 1px 5px;
     border-radius: 4px;
     font-weight: 700;
-}
-
-/* TABS: ЗАЛІЗНИЙ ФІКС ДЛЯ ANDROID (50% НА 50%, ОДНАКОВІ СИНІ КНОПКИ) */
-.stTabs [data-baseweb="tab-list"] {
-    display: flex !important;
-    width: 100% !important;
-    gap: 6px !important;
-    background-color: transparent !important;
-    padding: 0 !important;
-    margin-bottom: 10px !important;
-    border-bottom: 2px solid #e2e8f0 !important;
-}
-
-.stTabs [data-baseweb="tab"] {
-    flex: 1 1 50% !important; /* Кожна вкладка займає рівно половину екрана */
-    min-width: 0 !important;
-    max-width: 50% !important;
-    height: 38px !important;
-    padding: 6px 4px !important;
-    background-color: #f1f5f9 !important;
-    border-radius: 8px 8px 0 0 !important;
-    border: 1px solid #cbd5e1 !important;
-    border-bottom: none !important;
-    text-align: center !important;
-    justify-content: center !important;
-    display: flex !important;
-    align-items: center !important;
-}
-
-/* Єдиний гарантований синій колір тексту для обох вкладок на Android */
-.stTabs [data-baseweb="tab"],
-.stTabs [data-baseweb="tab"] *,
-.stTabs [data-baseweb="tab"] p,
-.stTabs [data-baseweb="tab"] span {
-    color: #0284c7 !important;
-    font-size: 0.82rem !important;
-    font-weight: 700 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-}
-
-/* Активна вкладка з контрастною синьою лінією знизу та білим тлом */
-.stTabs [aria-selected="true"] {
-    background-color: #ffffff !important;
-    border-top: 2px solid #0284c7 !important;
-    border-left: 1px solid #0284c7 !important;
-    border-right: 1px solid #0284c7 !important;
-    border-bottom: 3px solid #0284c7 !important;
-}
-
-.stTabs [aria-selected="true"] * {
-    color: #0369a1 !important;
-    font-weight: 800 !important;
 }
 
 /* Future Role Cards with Lead-Time Progress */
@@ -356,19 +302,16 @@ def load_data():
 
         elo_norm = ((df_b["arena_elo"].fillna(1000.0) - 1000.0) / 400.0 * 100.0).clip(lower=0.0, upper=100.0)
 
-        # Reasoning: HLE with fallback
         if "hle_score" in df_b.columns and df_b["hle_score"].notnull().any():
             reasoning = df_b["hle_score"].fillna(df_b.get("hard_prompts_score", 80.0))
         else:
             reasoning = df_b.get("hard_prompts_score", 80.0)
 
-        # Agentic OS/CLI: Terminal-Bench with fallback
         if "terminal_bench_score" in df_b.columns and df_b["terminal_bench_score"].notnull().any():
             agentic = df_b["terminal_bench_score"].fillna(df_b.get("coding_score", 80.0))
         else:
             agentic = df_b.get("coding_score", 80.0)
 
-        # Defense
         if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
             defense = df_b["defense_score"].fillna(agentic * 0.5 + reasoning * 0.5)
         else:
@@ -420,8 +363,8 @@ L = {
     "indexed": "INDEXED SIGNALS" if is_en else "ПРОІНДЕКСОВАНО",
     "status": "FEED STATUS" if is_en else "СТАТУС ФІДУ",
     "live": "Live" if is_en else "Наживо",
-    "tab_demand": "🔥 Demand" if is_en else "🔥 Попит",
-    "tab_future": "🔮 Future Roles" if is_en else "🔮 Майбутні ролі",
+    "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Попит на ринку",
+    "tab_future": "🔮 Future Roles (3–6 Mo.)" if is_en else "🔮 Майбутні ролі (3–6 міс.)",
     "empty_skills": "No matching skills found for" if is_en else "Не знайдено навичок для",
     "empty_arxiv": "ArXiv research pipeline is syncing." if is_en else "Сигнали ArXiv синхронізуються.",
     "future_caption": "⚡ **Leading R&D Indicators (ArXiv)** — Predicted tech stack readiness and commercial hiring lead-time." if is_en else "⚡ **Leading R&D Indicators (ArXiv)** — Прогноз появи комерційних вакансій та стадії готовності технологій.",
@@ -533,11 +476,16 @@ def apply_clean_layout(fig, height=250):
     return fig
 
 # ==========================================
-# 8. MARKET TABS (DEMAND & FUTURE ROLES)
+# 8. ANALYTICS VIEW SELECTOR (REPLACED TABS)
 # ==========================================
-tab1, tab2 = st.tabs([L["tab_demand"], L["tab_future"]])
+selected_view = st.selectbox(
+    "Select Analytics View",
+    options=[L["tab_demand"], L["tab_future"]],
+    index=0,
+    label_visibility="collapsed"
+)
 
-with tab1:
+if selected_view == L["tab_demand"]:
     f_chart_skills = filtered_skills.copy()
     if selected_track != "All" and "track" in f_chart_skills.columns:
         f_chart_skills = f_chart_skills[f_chart_skills["track"] == selected_track]
@@ -570,7 +518,7 @@ with tab1:
     else:
         st.caption(f"{L['empty_skills']} {reg_lookup}.")
 
-with tab2:
+else:
     if not df_arxiv.empty:
         st.caption(L["future_caption"])
         total_items = len(df_arxiv)
@@ -818,4 +766,4 @@ if not df_sai_hist.empty:
                 'scrollZoom': False,
                 'displayModeBar': False
             }
-        )   
+        )
