@@ -274,10 +274,14 @@ def load_data():
         autonomy_mult, horizon_mins = 0.210, 30.0
 
     try:
-        res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
+        res_benchmarks = supabase.table("v_latest_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
         df_b = pd.DataFrame(res_benchmarks.data)
     except Exception:
-        df_b = pd.DataFrame()
+        try:
+            res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
+            df_b = pd.DataFrame(res_benchmarks.data)
+        except Exception:
+            df_b = pd.DataFrame()
 
     return df_s, df_ar, df_h, df_b, autonomy_mult, horizon_mins
 
@@ -350,11 +354,8 @@ if reg_lookup != "All Regions":
     target_reg = "EU" if reg_lookup == "Europe" else reg_lookup
     if "region" in filtered_skills.columns:
         filtered_skills = filtered_skills[filtered_skills["region"].isin([reg_lookup, target_reg])]
-    elif not filtered_skills.empty:
-        weights = {"US": 0.55, "Europe": 0.30, "APAC": 0.15}
-        w = weights.get(reg_lookup, 1.0)
-        filtered_skills["vacancy_count"] = (filtered_skills["vacancy_count"] * w).round().astype(int)
-        filtered_skills = filtered_skills[filtered_skills["vacancy_count"] > 0]
+    else:
+        filtered_skills = pd.DataFrame()
 
 with st.sidebar:
     st.markdown("#### Filters" if is_en else "#### Фільтри")
