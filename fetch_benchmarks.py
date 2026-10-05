@@ -1,75 +1,25 @@
-"""
-fetch_benchmarks.py
-Fully automated, token-free ingestion of real AI model benchmarks into Supabase.
-No hardcoded models. Connects to live public evaluation feeds.
-"""
-
-import os
-import logging
-import requests
-from datetime import datetime, timezone
-from supabase import create_client, Client
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
-
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co").strip()
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY in environment variables.")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Публічні відкриті джерела з реальними замірами (без потреби в токенах HF)
-LIVE_SOURCES = [
-    "https://raw.githubusercontent.com/evals-hub/benchmarks-data/main/leaderboard.json",
-    "https://raw.githubusercontent.com/lmsys/arena-benchmarks/main/arena_elo_latest.json"
-]
-
-TARGET_FAMILIES = ["claude", "gemini", "gpt", "deepseek", "llama", "qwen"]
-
-def fetch_live_data():
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    
-    for url in LIVE_SOURCES:
-        try:
-            resp = requests.get(url, headers=headers, timeout=12)
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list) and len(data) > 0:
-                    logging.info(f"Connected to live source: {url}")
-                    return data
-        except Exception as err:
-            logging.warning(f"Source {url} unreachable: {err}")
-            
-    return None
-
 def process_and_ingest():
     raw_data = fetch_live_data()
     
-    # Сувора перевірка: якщо немає живих даних, не створюємо фейкових записів
     if not raw_data:
         logging.error("Live feeds unavailable. Aborting ingestion to maintain data integrity.")
         return
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    discovered = {}
+    parsed_models = []
 
     for item in raw_data:
         name = str(item.get("model", item.get("model_name", ""))).strip()
-        name_lower = name.lower()
-        
-        # Визначаємо приналежність до провідних сімейств
-        matched_family = next((f for f in TARGET_FAMILIES if f in name_lower), None)
-        if not matched_family:
+        if not name:
             continue
 
         try:
-            elo = float(item.get("rating", item.get("arena_elo", 1200.0)))
+            elo = float(item.get("rating", item.get("arena_elo", 0.0)))
         except (ValueError, TypeError):
+            continue
+
+        # Відсікаємо застарілі або слабкі моделі нижче базового рівня
+        if elo < 1200.0:
             continue
 
         try:
@@ -82,28 +32,37 @@ def process_and_ingest():
         except (ValueError, TypeError):
             hard = 80.0
 
-        # Зберігаємо найсильнішого представника для кожної родини моделей
-        if matched_family not in discovered or elo > discovered[matched_family]["arena_elo"]:
-            discovered[matched_family] = {
-                "recorded_at": now_iso,
-                "model_name": name,
-                "organization": item.get("organization", item.get("org", "Frontier Lab")),
-                "arena_elo": round(elo, 1),
-                "coding_score": round(coding, 1),
-                "hard_prompts_score": round(hard, 1),
-                "defense_score": round(coding * 0.5 + hard * 0.5, 1),
-                "license": "Open Weights" if any(w in name_lower for w in ["deepseek", "llama", "qwen"]) else "Proprietary"
-            }
+        org = item.get("organization", item.get("org", "Independent Lab"))
+        license_type = item.get("license", "Proprietary" if "open" not in str(item).lower() else "Open Weights")
 
-    records = list(discovered.values())
-    if not records:
-        logging.warning("No eligible frontier models extracted from feed.")
+        parsed_models.append({
+            "recorded_at": now_iso,
+            "model_name": name,
+            "organization": org,
+            "arena_elo": round(elo, 1),
+            "coding_score": round(coding, 1),
+            "hard_prompts_score": round(hard, 1),
+            "defense_score": round(coding * 0.5 + hard * 0.5, 1),
+            "license": license_type
+        })
+
+    if not parsed_models:
+        logging.warning("No valid frontier models found in feed.")
         return
 
-    logging.info(f"Submitting {len(records)} live models to Supabase...")
+    # Сортуємо виключно за балами: від найсильнішої до найслабшої
+    parsed_models.sort(key=lambda x: x["arena_elo"], reverse=True)
+
+    # Залишаємо по 1 флагману від кожної організації серед топ-моделей
+    unique_org_leaders = {}
+    for m in parsed_models:
+        org_key = m["organization"].lower()
+        if org_key not in unique_org_leaders:
+            unique_org_leaders[org_key] = m
+
+    records = list(unique_org_leaders.values())[:8]
+
+    logging.info(f"Submitting {len(records)} dynamically discovered models to Supabase...")
     res = supabase.table("fct_ai_benchmarks").insert(records).execute()
     count = len(res.data) if res.data else 0
-    logging.info(f"Successfully inserted {count} verified entries in fct_ai_benchmarks.")
-
-if __name__ == "__main__":
-    process_and_ingest()
+    logging.info(f"Successfully inserted {count} frontier entries into fct_ai_benchmarks.")
