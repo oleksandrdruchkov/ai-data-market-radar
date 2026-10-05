@@ -548,6 +548,19 @@ else:
 
 bar_width = min(max(sai_val, 0.0), 100.0)
 
+if sai_val >= 75.0:
+    asl_tier_label = "ASL-4 (Systemic Autonomy)"
+    asl_tier_color = "#dc2626"
+elif sai_val >= 45.0:
+    asl_tier_label = "ASL-3+ (Frontier Risk)"
+    asl_tier_color = "#ea580c"
+elif sai_val > 20.0:
+    asl_tier_label = "ASL-3 (Autonomous Agent)"
+    asl_tier_color = "#7c3aed"
+else:
+    asl_tier_label = "ASL-2 (Safe Copilot)"
+    asl_tier_color = "#0284c7"
+
 st.markdown(f"""
 <div class="sai-card">
   <div class="sai-header">
@@ -562,131 +575,4 @@ st.markdown(f"""
   </div>
   <div class="sai-meta">
     <span>{L['sai_leader']} <b>{leader_model}</b></span>
-    <span style="color:#0284c7; font-weight:700;">ASL-2 (Safe Copilot)</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-with st.expander(L["method_expander"]):
-    if is_en:
-        st.markdown(f"""
-        **Evaluated Frontier Benchmarks:**
-        * **Ph.D.-Level Reasoning (35%):** Humanity's Last Exam (HLE) & Hard Prompts.
-        * **Agentic OS & Terminal Engineering (30%):** Terminal-Bench 2.0 / SWE-bench.
-        * **Cyber Defense & Alignment (20%):** Security Audit & Resilience score.
-        * **General Capability (15%):** LMSYS Chatbot Arena Elo (normalized to 1000–1400 baseline).
-
-        **Synthesis Formula (MCDA):**
-        $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Agentic}}}} + 0.20 \\cdot S_{{\\text{{Defense}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
-
-        * **Current METR Autonomy Multiplier ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):**
-          Based on continuous stable operation horizon ($T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ mins) relative to closed-loop autonomous execution ($10^7$ mins).
-        * **Safety Classification:** **ASL-2 (Safe Copilot)** — models require active human oversight.
-        """)
-    else:
-        st.markdown(f"""
-        **Оцінювані бенчмарки передового ШІ:**
-        * **Ph.D.-рівень міркувань (35%):** Humanity's Last Exam (HLE) та Hard Prompts.
-        * **Агентна робота в ОС та терміналі (30%):** Terminal-Bench 2.0 / SWE-bench.
-        * **Кіберзахист та стійкість (20%):** Аудит коду та безпекова стійкість.
-        * **Загальні здібності (15%):** LMSYS Chatbot Arena Elo (нормалізовано до бази 1000–1400).
-
-        **Синтетична формула (MCDA):**
-        $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Agentic}}}} + 0.20 \\cdot S_{{\\text{{Defense}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
-
-        * **Поточний множник автономності METR ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):**
-          Розраховано з горизонту стабільної дії ($T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ хв) відносно повної замкненої автономії ($10^7$ хв).
-        * **Рівень безпеки:** **ASL-2 (Safe Copilot)** — потрібен активний людський нагляд.
-        """)
-
-if not df_b.empty:
-    with st.expander(L["compare_expander"]):
-        cols_present = [c for c in ["model_name", "organization", "arena_elo", "coding_score", "hard_prompts_score", "license"] if c in df_b.columns]
-        rename_map = {
-            "model_name": "Model" if is_en else "Модель",
-            "organization": "Org" if is_en else "Організація",
-            "arena_elo": "Arena Elo",
-            "coding_score": "Coding %" if is_en else "Код %",
-            "hard_prompts_score": "Hard Prompts %" if is_en else "Складні промпти %",
-            "license": "License" if is_en else "Ліцензія"
-        }
-        st.dataframe(
-            df_b[cols_present].rename(columns=rename_map),
-            use_container_width=True,
-            hide_index=True
-        )
-
-if not df_sai_hist.empty:
-    with st.expander(L["timeline_expander"], expanded=True):
-        fig_hist = px.line(
-            df_sai_hist,
-            x="eval_date",
-            y="leader_sai",
-            markers=True,
-            labels={
-                "eval_date": "Date" if is_en else "Дата",
-                "leader_sai": "SAI Score (%)",
-                "leader_model": "Leader Model" if is_en else "Модель-лідер",
-                "leader_org": "Organization" if is_en else "Організація"
-            },
-            hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
-        )
-
-        fig_hist.update_traces(
-            line_color="#4f46e5",
-            marker=dict(size=8, color="#3730a3")
-        )
-
-        annotations = []
-        for _, row in df_sai_hist.iterrows():
-            annotations.append(
-                dict(
-                    x=row["eval_date"],
-                    y=row["leader_sai"],
-                    text=f"<b>{row['leader_model']}</b>",
-                    showarrow=False,
-                    textangle=-90,
-                    yshift=45,
-                    font=dict(size=10, color="#0f172a", family="Inter, -apple-system, sans-serif")
-                )
-            )
-
-        y_min = max(0.0, float(df_sai_hist["leader_sai"].min()) - 4.0)
-        y_max = float(df_sai_hist["leader_sai"].max()) + 6.0
-
-        fig_hist.update_layout(
-            height=370,
-            dragmode="pan",
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            font=dict(color="#0f172a", size=10),
-            margin=dict(l=10, r=10, t=75, b=20),
-            annotations=annotations,
-            xaxis=dict(
-                title=dict(text="Evaluation Date" if is_en else "Дата заміру", font=dict(size=10, color="#64748b")),
-                showgrid=True,
-                gridcolor="#f8fafc",
-                tickfont=dict(size=9, color="#64748b"),
-                rangeslider=dict(visible=True, thickness=0.08),
-                type="date"
-            ),
-            yaxis=dict(
-                title=dict(text="SAI Score (%)", font=dict(size=10, color="#64748b")),
-                range=[y_min, y_max],
-                fixedrange=True,
-                showgrid=True,
-                gridcolor="#f8fafc",
-                tickfont=dict(size=9, color="#64748b"),
-                ticksuffix="%"
-            )
-        )
-
-        st.plotly_chart(
-            fig_hist,
-            use_container_width=True,
-            config={
-                'responsive': True,
-                'scrollZoom': False,
-                'displayModeBar': False
-            }
-        )
+    <span style="color:{
