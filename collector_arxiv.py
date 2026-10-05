@@ -1,15 +1,8 @@
-"""
-collector_arxiv.py
-Збір свіжих публікацій з ArXiv (cs.AI, cs.CL, cs.LG)
-та двомовна екстракція навичок/ролей через Gemini 3.8 Flash.
-"""
-
 import os
 import json
 import logging
 import xml.etree.ElementTree as ET
 import requests
-from datetime import datetime, timezone
 from supabase import create_client, Client
 from google import genai
 from google.genai import types
@@ -35,8 +28,12 @@ def fetch_arxiv_papers(max_results=8):
         "sortOrder": "descending",
         "max_results": max_results
     }
+    headers = {
+        "User-Agent": "MarketRadarBot/1.0 (https://github.com/oleksandrdruchkov/ai-data-market-radar; contact@marketradar.local)",
+        "Accept": "application/atom+xml,application/xml,text/xml"
+    }
     
-    response = requests.get(ARXIV_API_URL, params=params, timeout=20)
+    response = requests.get(ARXIV_API_URL, params=params, headers=headers, timeout=20)
     response.raise_for_status()
     
     root = ET.fromstring(response.content)
@@ -77,7 +74,7 @@ def analyze_paper_trends(paper):
     """
     try:
         response = ai_client.models.generate_content(
-            model="gemini-3.8-flash",
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -98,7 +95,6 @@ def run_arxiv_pipeline():
     for p in papers:
         analysis = analyze_paper_trends(p)
         if analysis:
-            # Зберігаємо двомовні описи структуровано
             summary_payload = {
                 "en": analysis.get("signal_summary_en", ""),
                 "ua": analysis.get("signal_summary_ua", ""),
