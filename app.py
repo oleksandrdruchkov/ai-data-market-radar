@@ -279,10 +279,6 @@ def load_data():
     except Exception:
         df_b = pd.DataFrame()
 
-    if not df_b.empty:
-        if "model_name" in df_b.columns and len(df_b) > 1:
-            df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
-
     return df_s, df_ar, df_h, df_b, autonomy_mult, horizon_mins
 
 @st.cache_data(ttl=60)
@@ -378,7 +374,7 @@ batch_size = df_health["records_ingested"].iloc[0] if not df_health.empty and "r
 
 top_skill_name = "N/A"
 top_skill_share = 0
-velocity_skill = "Dagster"
+velocity_skill = "N/A"
 
 if not filtered_skills.empty and "vacancy_count" in filtered_skills.columns:
     agg_temp = filtered_skills.groupby("skill_name")["vacancy_count"].sum().sort_values(ascending=False)
@@ -492,22 +488,7 @@ else:
                     else:
                         role_display = parsed_json.get("role_ua", role_display)
             except Exception:
-                if is_en and "Перехід від витратних" in desc_display:
-                    desc_display = "Transitioning from costly voxel grids to compact topological latent representations drastically cuts inference cost, accelerating 3D generation for robotics and spatial compute."
-                    role_display = "3D Generative AI Engineer"
-                elif is_en and "Побудова зовнішніх систем" in desc_display:
-                    desc_display = "External visual state harness and dynamic agent scaffolding are critical for multimodal models to execute autonomous long-horizon OS and spatial actions."
-                    role_display = "Multimodal Agent Systems Engineer"
-                elif is_en and "Радикальне зменшення пам'яті" in desc_display:
-                    desc_display = "Radical optimizer memory compression enables full-parameter fine-tuning of 30B+ models on a single GPU, drastically reducing compute infrastructure costs."
-                    role_display = "LLM Training Infrastructure Engineer"
-                elif not is_en:
-                    ua_role_map = {
-                        "3D Generative AI Engineer": "3D Генеративний AI-інженер",
-                        "Multimodal Agent Systems Engineer": "Інженер мультимодальних агентних систем",
-                        "LLM Training Infrastructure Engineer": "Інженер інфраструктури навчання LLM"
-                    }
-                    role_display = ua_role_map.get(role_display, role_display)
+                pass
 
             st.markdown(f"""
             <div class="future-role-card">
@@ -531,20 +512,26 @@ else:
     else:
         st.caption(L["empty_arxiv"])
 
-data_status_badge = ""
-is_stale = False
-last_date_str = "N/A"
-
-if not df_sai_hist.empty and "eval_date" in df_sai_hist.columns:
+if not df_sai_hist.empty and "leader_model" in df_sai_hist.columns:
     latest_eval = df_sai_hist.iloc[-1]
-    last_date_str = str(latest_eval.get("eval_date", "Latest"))
-    sai_val = float(latest_eval.get("leader_sai", 19.2))
-    leader_model = str(latest_eval.get("leader_model", "Claude 3.7 Sonnet"))
-    data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
+    leader_model = str(latest_eval.get("leader_model", "Synchronizing..."))
+    sai_val = float(latest_eval.get("leader_sai", 0.0))
+    last_date_str = str(latest_eval.get("eval_date", ""))
+    
+    try:
+        eval_dt = datetime.strptime(last_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - eval_dt).total_seconds() / 3600.0
+        if age_hours <= 48:
+            data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
+        else:
+            days_stale = int(age_hours // 24)
+            data_status_badge = f'<span style="color:#f59e0b; font-size:0.75rem; font-weight:600;">{L["sai_stale"]} ({days_stale}d ago, {last_date_str})</span>'
+    except Exception:
+        data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
 else:
-    sai_val = 19.2
-    leader_model = "Claude 3.7 Sonnet"
-    data_status_badge = '<span style="color:#64748b; font-size:0.75rem; font-weight:600;">● Connected</span>'
+    leader_model = "Awaiting live pipeline run" if is_en else "Очікування першого збору"
+    sai_val = 0.0
+    data_status_badge = '<span style="color:#64748b; font-size:0.75rem; font-weight:600;">● No History</span>'
 
 bar_width = min(max(sai_val, 0.0), 100.0)
 
@@ -557,9 +544,12 @@ elif sai_val >= 45.0:
 elif sai_val > 20.0:
     asl_tier_label = "ASL-3 (Autonomous Agent)"
     asl_tier_color = "#7c3aed"
-else:
+elif sai_val > 0.0:
     asl_tier_label = "ASL-2 (Safe Copilot)"
     asl_tier_color = "#0284c7"
+else:
+    asl_tier_label = "Baseline"
+    asl_tier_color = "#64748b"
 
 st.markdown(f"""
 <div class="sai-card">
