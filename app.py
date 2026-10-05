@@ -690,4 +690,3 @@ if not df_sai_hist.empty:
                 'displayModeBar': False
             }
         )
-```[cite: 5, 7, 8]
