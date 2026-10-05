@@ -6,9 +6,6 @@ import pandas as pd
 import plotly.express as px
 from supabase import create_client, Client
 
-# ==========================================
-# 1. PAGE SETUP
-# ==========================================
 st.set_page_config(
     page_title="Market & AI Radar",
     page_icon="📡",
@@ -16,9 +13,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ==========================================
-# 2. ULTRA-COMPACT MOBILE CSS
-# ==========================================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -40,7 +34,6 @@ header[data-testid="stHeader"] {
     display: none !important;
 }
 
-/* Market Status Bar (2x2 Grid) */
 .market-status-bar {
     display: flex;
     flex-wrap: wrap;
@@ -93,7 +86,6 @@ header[data-testid="stHeader"] {
     font-weight: 700;
 }
 
-/* Future Role Cards with Lead-Time Progress */
 .future-role-card {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -169,7 +161,6 @@ header[data-testid="stHeader"] {
     line-height: 1.35;
 }
 
-/* Frontier AI Autonomy (SAI) Card */
 .sai-card {
     background: #ffffff;
     border: 1px solid #cbd5e1;
@@ -234,9 +225,6 @@ div[data-testid="stPlotlyChart"] {
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 3. SUPABASE CONNECTION
-# ==========================================
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
 
@@ -249,9 +237,6 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# ==========================================
-# 4. DATA LOADERS & DYNAMIC SAI COMPUTATION
-# ==========================================
 @st.cache_data(ttl=120)
 def load_data():
     try:
@@ -272,7 +257,6 @@ def load_data():
     except Exception:
         df_h = pd.DataFrame()
 
-    # Dynamic Autonomy Multiplier
     try:
         res_params = (
             supabase.table("dim_autonomy_parameters")
@@ -289,43 +273,15 @@ def load_data():
     except Exception:
         autonomy_mult, horizon_mins = 0.210, 30.0
 
-    # AI Benchmarks
     try:
         res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
         df_b = pd.DataFrame(res_benchmarks.data)
     except Exception:
         df_b = pd.DataFrame()
 
-    if not df_b.empty and "arena_elo" in df_b.columns:
+    if not df_b.empty:
         if "model_name" in df_b.columns and len(df_b) > 1:
             df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
-
-        elo_norm = ((df_b["arena_elo"].fillna(1000.0) - 1000.0) / 400.0 * 100.0).clip(lower=0.0, upper=100.0)
-
-        if "hle_score" in df_b.columns and df_b["hle_score"].notnull().any():
-            reasoning = df_b["hle_score"].fillna(df_b.get("hard_prompts_score", 80.0))
-        else:
-            reasoning = df_b.get("hard_prompts_score", 80.0)
-
-        if "terminal_bench_score" in df_b.columns and df_b["terminal_bench_score"].notnull().any():
-            agentic = df_b["terminal_bench_score"].fillna(df_b.get("coding_score", 80.0))
-        else:
-            agentic = df_b.get("coding_score", 80.0)
-
-        if "defense_score" in df_b.columns and df_b["defense_score"].notnull().any():
-            defense = df_b["defense_score"].fillna(agentic * 0.5 + reasoning * 0.5)
-        else:
-            defense = (agentic + reasoning) / 2.0
-
-        raw_test_score = (
-            0.35 * reasoning +
-            0.30 * agentic +
-            0.20 * defense +
-            0.15 * elo_norm
-        )
-
-        df_b["sai_score"] = (raw_test_score * autonomy_mult).round(1)
-        df_b = df_b.sort_values(by="sai_score", ascending=False).reset_index(drop=True)
 
     return df_s, df_ar, df_h, df_b, autonomy_mult, horizon_mins
 
@@ -340,9 +296,6 @@ def load_sai_history():
 df_skills_base, df_arxiv, df_health, df_b, active_multiplier, active_horizon = load_data()
 df_sai_hist = load_sai_history()
 
-# ==========================================
-# 5. HEADER, LANGUAGE SWITCHER & REGION SCOPE
-# ==========================================
 col_head, col_lang, col_reg = st.columns([1.1, 0.55, 1.1])
 with col_head:
     st.markdown("<div style='font-weight:800; font-size:1.05rem; color:#0f172a; padding-top:4px;'>📡 Market Radar</div>", unsafe_allow_html=True)
@@ -407,9 +360,6 @@ if reg_lookup != "All Regions":
         filtered_skills["vacancy_count"] = (filtered_skills["vacancy_count"] * w).round().astype(int)
         filtered_skills = filtered_skills[filtered_skills["vacancy_count"] > 0]
 
-# ==========================================
-# 6. SIDEBAR FILTERS
-# ==========================================
 with st.sidebar:
     st.markdown("#### Filters" if is_en else "#### Фільтри")
     tracks = ["All"] + (sorted(df_skills_base["track"].dropna().unique().tolist()) if not df_skills_base.empty and "track" in df_skills_base.columns else [])
@@ -423,9 +373,6 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# ==========================================
-# 7. MARKET STATUS BAR (2x2 GRID)
-# ==========================================
 total_skills = int(filtered_skills["vacancy_count"].sum()) if not filtered_skills.empty and "vacancy_count" in filtered_skills.columns else 0
 batch_size = df_health["records_ingested"].iloc[0] if not df_health.empty and "records_ingested" in df_health.columns else 0
 
@@ -475,9 +422,6 @@ def apply_clean_layout(fig, height=250):
     )
     return fig
 
-# ==========================================
-# 8. ANALYTICS VIEW SELECTOR (REPLACED TABS)
-# ==========================================
 selected_view = st.selectbox(
     "Select Analytics View",
     options=[L["tab_demand"], L["tab_future"]],
@@ -587,36 +531,20 @@ else:
     else:
         st.caption(L["empty_arxiv"])
 
-# ==========================================
-# 9. FRONTIER AI AUTONOMY (SAI) CARD
-# ==========================================
 data_status_badge = ""
 is_stale = False
 last_date_str = "N/A"
 
-if not df_b.empty and "recorded_at" in df_b.columns:
-    df_b["recorded_at_dt"] = pd.to_datetime(df_b["recorded_at"], utc=True)
-    latest_ts = df_b["recorded_at_dt"].max()
-    now_utc = datetime.now(timezone.utc)
-    age_hours = (now_utc - latest_ts).total_seconds() / 3600.0
-    last_date_str = latest_ts.strftime("%d.%m.%Y")
-
-    if age_hours <= 48:
-        data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
-    else:
-        is_stale = True
-        days_stale = int(age_hours // 24)
-        data_status_badge = f'<span style="color:#f59e0b; font-size:0.75rem; font-weight:600;">{L["sai_stale"]} ({days_stale}d ago, {last_date_str})</span>'
-else:
-    data_status_badge = '<span style="color:#64748b; font-size:0.75rem; font-weight:600;">● Connected</span>'
-
-if not df_b.empty and "sai_score" in df_b.columns:
-    leader_row = df_b.iloc[0]
-    leader_model = str(leader_row.get("model_name", "Claude 3.7 Sonnet"))
-    sai_val = float(leader_row.get("sai_score", 19.2))
+if not df_sai_hist.empty and "eval_date" in df_sai_hist.columns:
+    latest_eval = df_sai_hist.iloc[-1]
+    last_date_str = str(latest_eval.get("eval_date", "Latest"))
+    sai_val = float(latest_eval.get("leader_sai", 19.2))
+    leader_model = str(latest_eval.get("leader_model", "Claude 3.7 Sonnet"))
+    data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
 else:
     sai_val = 19.2
     leader_model = "Claude 3.7 Sonnet"
+    data_status_badge = '<span style="color:#64748b; font-size:0.75rem; font-weight:600;">● Connected</span>'
 
 bar_width = min(max(sai_val, 0.0), 100.0)
 
@@ -639,7 +567,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Methodology expander
 with st.expander(L["method_expander"]):
     if is_en:
         st.markdown(f"""
@@ -672,17 +599,16 @@ with st.expander(L["method_expander"]):
         * **Рівень безпеки:** **ASL-2 (Safe Copilot)** — потрібен активний людський нагляд.
         """)
 
-# Leaderboard expander
-if not df_b.empty and "sai_score" in df_b.columns:
+if not df_b.empty:
     with st.expander(L["compare_expander"]):
-        cols_present = [c for c in ["model_name", "organization", "sai_score", "hle_score", "terminal_bench_score", "arena_elo"] if c in df_b.columns]
+        cols_present = [c for c in ["model_name", "organization", "arena_elo", "coding_score", "hard_prompts_score", "license"] if c in df_b.columns]
         rename_map = {
             "model_name": "Model" if is_en else "Модель",
             "organization": "Org" if is_en else "Організація",
-            "sai_score": "SAI (/100)",
-            "hle_score": "HLE %",
-            "terminal_bench_score": "Terminal-Bench %",
-            "arena_elo": "Arena Elo"
+            "arena_elo": "Arena Elo",
+            "coding_score": "Coding %" if is_en else "Код %",
+            "hard_prompts_score": "Hard Prompts %" if is_en else "Складні промпти %",
+            "license": "License" if is_en else "Ліцензія"
         }
         st.dataframe(
             df_b[cols_present].rename(columns=rename_map),
@@ -690,9 +616,6 @@ if not df_b.empty and "sai_score" in df_b.columns:
             hide_index=True
         )
 
-# ==========================================
-# 10. SAI TIMELINE: DYNAMIC HISTORY (ALWAYS EXPANDED)
-# ==========================================
 if not df_sai_hist.empty:
     with st.expander(L["timeline_expander"], expanded=True):
         fig_hist = px.line(
@@ -724,7 +647,7 @@ if not df_sai_hist.empty:
                     showarrow=False,
                     textangle=-90,
                     yshift=45,
-                    font=dict(size=10, color="#f8fafc", family="Inter, -apple-system, sans-serif")
+                    font=dict(size=10, color="#0f172a", family="Inter, -apple-system, sans-serif")
                 )
             )
 
@@ -767,3 +690,4 @@ if not df_sai_hist.empty:
                 'displayModeBar': False
             }
         )
+```[cite: 5, 7, 8]
