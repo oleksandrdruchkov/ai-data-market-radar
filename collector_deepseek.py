@@ -8,7 +8,6 @@ from typing import Dict, List, Any
 
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
 from google.genai.errors import APIError
 from supabase import create_client, Client
 
@@ -20,8 +19,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-PRIMARY_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.8-pro")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+FREE_TIER_DELAY_SECONDS = 13  # Забезпечує ліміт <= 5 запитів/хвилину
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -95,35 +94,32 @@ def fetch_deepseek_openings() -> List[Dict[str, Any]]:
         }
     ]
 
-def analyze_job_with_gemini(prompt: str, max_retries: int = 4) -> Dict[str, Any]:
-    active_model = PRIMARY_MODEL
-    config = types.GenerateContentConfig(
-        response_mime_type="application/json"
-    )
+def analyze_job_with_gemini(prompt: str, max_retries: int = 5) -> Dict[str, Any]:
+    gen_config = {
+        "response_mime_type": "application/json",
+        "thinking_level": "minimal"
+    }
 
     for attempt in range(1, max_retries + 1):
         try:
-            res = ai_client.models.generate_content(
-                model=active_model,
-                contents=prompt,
-                config=config
+            interaction = ai_client.interactions.create(
+                model=MODEL_NAME,
+                input=prompt,
+                generation_config=gen_config
             )
-            return json.loads(res.text)
+            return json.loads(interaction.output_text)
         except (APIError, Exception) as err:
             err_str = str(err)
-            is_transient_error = "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str
+            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+            is_server_busy = "503" in err_str or "UNAVAILABLE" in err_str
 
-            if is_transient_error and attempt < max_retries:
-                wait_time = 2 ** attempt
+            if (is_rate_limit or is_server_busy) and attempt < max_retries:
+                wait_time = 15 if is_rate_limit else (2 ** attempt * 5)
                 logging.warning(
-                    f"Gemini [{active_model}] тимчасово недоступний (спроба {attempt}/{max_retries}). "
-                    f"Пауза {wait_time}s перед ретраєм..."
+                    f"Gemini API [{MODEL_NAME}] помилка ({err_str[:80]}...). "
+                    f"Спроба {attempt}/{max_retries}. Очікування {wait_time}s..."
                 )
                 time.sleep(wait_time)
-
-                if attempt >= 2 and FALLBACK_MODEL and active_model != FALLBACK_MODEL:
-                    logging.info(f"Перемикання на резервну модель: {FALLBACK_MODEL}")
-                    active_model = FALLBACK_MODEL
             else:
                 raise err
 
@@ -132,7 +128,7 @@ def run_deepseek_pipeline():
     jobs = fetch_deepseek_openings()
     saved_count = 0
 
-    for job in jobs:
+    for idx, job in enumerate(jobs):
         ext_id = str(job["id"])
         source_name = "deepseek_careers"
         content_hash = calculate_content_hash(f"{job['title']}|{job['company']}|{job['description']}")
@@ -217,6 +213,11 @@ def run_deepseek_pipeline():
             logging.error(f"Error processing {ext_id}: {e}")
             if raw_id:
                 supabase.table("raw_jobs").update({"status": "failed"}).eq("id", raw_id).execute()
+
+        # Затримка між запитами під Free Tier ліміти
+        if idx < len(jobs) - 1:
+            logging.info(f"Free Tier delay: очікування {FREE_TIER_DELAY_SECONDS}s...")
+            time.sleep(FREE_TIER_DELAY_SECONDS)
 
     logging.info(f"=== FINISHED. Successfully processed: {saved_count} ===")
 
