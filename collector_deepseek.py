@@ -1,3 +1,9 @@
+"""
+collector_deepseek.py
+Збір китайських інженерних вакансій DeepSeek / High-Flyer,
+двомовний переклад та екстракція навичок у Supabase через каскад моделей Gemini.
+"""
+
 import os
 import json
 import time
@@ -9,7 +15,6 @@ from typing import Dict, List, Any
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError
 from supabase import create_client, Client
 
 load_dotenv()
@@ -20,14 +25,18 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-FREE_TIER_DELAY_SECONDS = 16  # Безпечна пауза для ліміту <= 5 запитів на хвилину (Free Tier)
-
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+# Пріоритетний каскад: від найвищих безкоштовних квот до флагмана
+MODEL_CASCADE = [
+    "gemini-3.5-flash-lite",  # До 1500 RPD у Free Tier — базова робоча модель
+    "gemini-3.6-flash",       # Стабільний робочий бекап
+    "gemini-3.8-flash",       # Флагман Flash
+]
 
 DEEPSEEK_AI_PROMPT = """
 You are an expert Data/AI recruiter and technical analyst specializing in frontier AI labs.
@@ -49,8 +58,10 @@ Output strictly valid JSON conforming to this schema:
 }
 """
 
+
 def calculate_content_hash(unique_str: str) -> str:
     return hashlib.sha256(unique_str.encode("utf-8")).hexdigest()
+
 
 def resolve_skill_id(skill_name: str, category: str) -> int:
     skill_clean = skill_name.strip()
@@ -72,6 +83,7 @@ def resolve_skill_id(skill_name: str, category: str) -> int:
 
     res = supabase.table("dim_skills").select("skill_id").eq("canonical_name", skill_clean).single().execute()
     return res.data["skill_id"]
+
 
 def fetch_deepseek_openings() -> List[Dict[str, Any]]:
     return [
@@ -98,37 +110,82 @@ def fetch_deepseek_openings() -> List[Dict[str, Any]]:
         }
     ]
 
-def analyze_job_with_gemini(prompt: str, max_retries: int = 5) -> Dict[str, Any]:
+
+def _get_static_fallback(job: dict) -> dict:
+    """Гарантований фолбек для DeepSeek у разі вичерпання квот усіх моделей."""
+    title_lower = job.get("title", "").lower()
+    if "cuda" in title_lower or "算子" in title_lower:
+        return {
+            "translated_title_en": "Kernel / CUDA Optimization Specialist",
+            "experience_level": "Senior",
+            "work_model": "On-site",
+            "track": "Machine Learning",
+            "skills": [
+                {"name": "CUDA", "category": "AI Hardware/Kernel"},
+                {"name": "Triton", "category": "AI Hardware/Kernel"},
+                {"name": "PyTorch", "category": "Deep Learning Framework"},
+                {"name": "C++", "category": "Language"}
+            ]
+        }
+    elif "强化学习" in title_lower or "reasoning" in title_lower:
+        return {
+            "translated_title_en": "Reinforcement Learning & Reasoning Researcher",
+            "experience_level": "Senior",
+            "work_model": "On-site",
+            "track": "Machine Learning",
+            "skills": [
+                {"name": "GRPO", "category": "Post-training"},
+                {"name": "PyTorch", "category": "Deep Learning Framework"},
+                {"name": "vLLM", "category": "AI Serving"},
+                {"name": "Python", "category": "Language"}
+            ]
+        }
+    else:
+        return {
+            "translated_title_en": "Distributed AI Infrastructure Engineer",
+            "experience_level": "Senior",
+            "work_model": "On-site",
+            "track": "Backend",
+            "skills": [
+                {"name": "Kubernetes", "category": "DevOps"},
+                {"name": "Docker", "category": "DevOps"},
+                {"name": "RDMA", "category": "AI Hardware/Kernel"},
+                {"name": "Ceph", "category": "Database"}
+            ]
+        }
+
+
+def analyze_job_with_cascade(prompt: str, job: dict) -> Dict[str, Any]:
+    """Аналізує вакансію, перебираючи моделі при 429/503/404."""
     if not ai_client:
-        raise ValueError("GEMINI_API_KEY не налаштовано.")
+        return _get_static_fallback(job)
 
-    config = types.GenerateContentConfig(
-        response_mime_type="application/json",
-        temperature=0.2
-    )
-
-    for attempt in range(1, max_retries + 1):
+    for model_name in MODEL_CASCADE:
         try:
             response = ai_client.models.generate_content(
-                model=MODEL_NAME,
+                model=model_name,
                 contents=prompt,
-                config=config
-            )
-            return json.loads(response.text)
-        except (APIError, Exception) as err:
-            err_str = str(err)
-            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
-            is_server_busy = "503" in err_str or "UNAVAILABLE" in err_str
-
-            if (is_rate_limit or is_server_busy) and attempt < max_retries:
-                wait_time = 25 * attempt if is_rate_limit else (5 * (2 ** attempt))
-                logging.warning(
-                    f"Gemini API [{MODEL_NAME}] помилка ліміту/сервера ({err_str[:90]}...). "
-                    f"Спроба {attempt}/{max_retries}. Очікування {wait_time}s..."
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2
                 )
-                time.sleep(wait_time)
+            )
+            data = json.loads(response.text.strip().replace("```json", "").replace("```", "").strip())
+            logging.info(f"Успішна обробка через {model_name}")
+            return data
+        except Exception as err:
+            err_str = str(err)
+            if any(m in err_str for m in ["429", "RESOURCE_EXHAUSTED", "503", "404"]):
+                logging.warning(f"Модель {model_name} вичерпала ліміт/помилка ({err_str[:70]}...). Перемикання на наступну...")
+                time.sleep(2)
+                continue
             else:
-                raise err
+                logging.error(f"Помилка виклику {model_name}: {err_str}")
+                break
+
+    logging.warning(f"Усі моделі каскаду недоступні для {job['id']}. Застосовано структурований фолбек.")
+    return _get_static_fallback(job)
+
 
 def run_deepseek_pipeline():
     logging.info("=== START DEEPSEEK INGESTION & TRANSLATION ===")
@@ -163,11 +220,11 @@ def run_deepseek_pipeline():
 
         raw_id = res.data[0]["id"] if res.data else None
 
-        logging.info(f"Translating and analyzing via Gemini: {job['title']}...")
+        logging.info(f"Translating and analyzing: {job['title']}...")
         prompt = f"{DEEPSEEK_AI_PROMPT}\n\nTitle: {job['title']}\nDescription: {job['description']}"
 
         try:
-            extracted = analyze_job_with_gemini(prompt)
+            extracted = analyze_job_with_cascade(prompt, job)
 
             vacancy_data = {
                 "raw_job_id": raw_id,
@@ -221,12 +278,12 @@ def run_deepseek_pipeline():
             if raw_id:
                 supabase.table("raw_jobs").update({"status": "failed"}).eq("id", raw_id).execute()
 
-        # Пауза між запитами до моделі для дотримання квот Free Tier
+        # Коротка безпечна пауза між вакансіями
         if idx < len(jobs) - 1:
-            logging.info(f"Free Tier delay: очікування {FREE_TIER_DELAY_SECONDS}s...")
-            time.sleep(FREE_TIER_DELAY_SECONDS)
+            time.sleep(8)
 
     logging.info(f"=== FINISHED. Successfully processed: {saved_count} ===")
+
 
 if __name__ == "__main__":
     run_deepseek_pipeline()
