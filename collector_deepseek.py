@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -8,16 +9,19 @@ from typing import Dict, List, Any
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 from supabase import create_client, Client
 
-# Завантажуємо локальний .env
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "[https://npwqiyzmhjypfvrjssxi.supabase.co](https://npwqiyzmhjypfvrjssxi.supabase.co)")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
+PRIMARY_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.8-pro")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -91,6 +95,38 @@ def fetch_deepseek_openings() -> List[Dict[str, Any]]:
         }
     ]
 
+def analyze_job_with_gemini(prompt: str, max_retries: int = 4) -> Dict[str, Any]:
+    active_model = PRIMARY_MODEL
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json"
+    )
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            res = ai_client.models.generate_content(
+                model=active_model,
+                contents=prompt,
+                config=config
+            )
+            return json.loads(res.text)
+        except (APIError, Exception) as err:
+            err_str = str(err)
+            is_transient_error = "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str
+
+            if is_transient_error and attempt < max_retries:
+                wait_time = 2 ** attempt
+                logging.warning(
+                    f"Gemini [{active_model}] тимчасово недоступний (спроба {attempt}/{max_retries}). "
+                    f"Пауза {wait_time}s перед ретраєм..."
+                )
+                time.sleep(wait_time)
+
+                if attempt >= 2 and FALLBACK_MODEL and active_model != FALLBACK_MODEL:
+                    logging.info(f"Перемикання на резервну модель: {FALLBACK_MODEL}")
+                    active_model = FALLBACK_MODEL
+            else:
+                raise err
+
 def run_deepseek_pipeline():
     logging.info("=== START DEEPSEEK INGESTION & TRANSLATION ===")
     jobs = fetch_deepseek_openings()
@@ -128,12 +164,7 @@ def run_deepseek_pipeline():
         prompt = f"{DEEPSEEK_AI_PROMPT}\n\nTitle: {job['title']}\nDescription: {job['description']}"
 
         try:
-            ai_res = ai_client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            extracted = json.loads(ai_res.text)
+            extracted = analyze_job_with_gemini(prompt)
 
             vacancy_data = {
                 "raw_job_id": raw_id,
