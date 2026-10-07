@@ -8,6 +8,7 @@ from typing import Dict, List, Any
 
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 from google.genai.errors import APIError
 from supabase import create_client, Client
 
@@ -15,15 +16,18 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-FREE_TIER_DELAY_SECONDS = 13  # Забезпечує ліміт <= 5 запитів/хвилину
+FREE_TIER_DELAY_SECONDS = 16  # Безпечна пауза для ліміту <= 5 запитів на хвилину (Free Tier)
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
+ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 DEEPSEEK_AI_PROMPT = """
 You are an expert Data/AI recruiter and technical analyst specializing in frontier AI labs.
@@ -95,28 +99,31 @@ def fetch_deepseek_openings() -> List[Dict[str, Any]]:
     ]
 
 def analyze_job_with_gemini(prompt: str, max_retries: int = 5) -> Dict[str, Any]:
-    gen_config = {
-        "response_mime_type": "application/json",
-        "thinking_level": "minimal"
-    }
+    if not ai_client:
+        raise ValueError("GEMINI_API_KEY не налаштовано.")
+
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.2
+    )
 
     for attempt in range(1, max_retries + 1):
         try:
-            interaction = ai_client.interactions.create(
+            response = ai_client.models.generate_content(
                 model=MODEL_NAME,
-                input=prompt,
-                generation_config=gen_config
+                contents=prompt,
+                config=config
             )
-            return json.loads(interaction.output_text)
+            return json.loads(response.text)
         except (APIError, Exception) as err:
             err_str = str(err)
             is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
             is_server_busy = "503" in err_str or "UNAVAILABLE" in err_str
 
             if (is_rate_limit or is_server_busy) and attempt < max_retries:
-                wait_time = 15 if is_rate_limit else (2 ** attempt * 5)
+                wait_time = 25 * attempt if is_rate_limit else (5 * (2 ** attempt))
                 logging.warning(
-                    f"Gemini API [{MODEL_NAME}] помилка ({err_str[:80]}...). "
+                    f"Gemini API [{MODEL_NAME}] помилка ліміту/сервера ({err_str[:90]}...). "
                     f"Спроба {attempt}/{max_retries}. Очікування {wait_time}s..."
                 )
                 time.sleep(wait_time)
@@ -214,7 +221,7 @@ def run_deepseek_pipeline():
             if raw_id:
                 supabase.table("raw_jobs").update({"status": "failed"}).eq("id", raw_id).execute()
 
-        # Затримка між запитами під Free Tier ліміти
+        # Пауза між запитами до моделі для дотримання квот Free Tier
         if idx < len(jobs) - 1:
             logging.info(f"Free Tier delay: очікування {FREE_TIER_DELAY_SECONDS}s...")
             time.sleep(FREE_TIER_DELAY_SECONDS)
