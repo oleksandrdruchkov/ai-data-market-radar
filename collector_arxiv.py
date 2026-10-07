@@ -1,7 +1,7 @@
 """
 collector_arxiv.py
 Збір свіжих наукових публікацій з ArXiv (cs.AI, cs.CL, cs.LG)
-та двомовна екстракція навичок/ролей через Gemini Flash з обробкою лімітів квот.
+та двомовна екстракція навичок/ролей через каскад моделей Gemini.
 """
 
 import os
@@ -15,19 +15,29 @@ from supabase import create_client, Client
 from google import genai
 from google.genai import types
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co").strip()
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Відсутні змінні SUPABASE_URL або SUPABASE_KEY.")
+    raise ValueError("Відсутні обов'язкові змінні SUPABASE_URL або SUPABASE_KEY.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+
+# Каскадний список моделей за пріоритетом квот та доступності
+MODEL_CASCADE = [
+    "gemini-3.5-flash-lite",  # Високі квоти (1500 RPD) — базова робоча модель
+    "gemini-3.6-flash",       # Стабільна альтернатива
+    "gemini-3.8-flash",       # Флагман Flash (ліміт 20 RPD у Free Tier)
+]
 
 
 def fetch_arxiv_papers(max_results: int = 5):
@@ -72,10 +82,18 @@ def fetch_arxiv_papers(max_results: int = 5):
         )
 
         pub_elem = entry.find("atom:published", ns)
-        published = pub_elem.text[:10] if pub_elem is not None else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        published = (
+            pub_elem.text[:10]
+            if pub_elem is not None
+            else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        )
 
         cat_elem = entry.find("atom:category", ns)
-        category = cat_elem.attrib.get("term", "cs.AI") if cat_elem is not None else "cs.AI"
+        category = (
+            cat_elem.attrib.get("term", "cs.AI")
+            if cat_elem is not None
+            else "cs.AI"
+        )
 
         papers.append({
             "arxiv_id": arxiv_id,
@@ -87,19 +105,24 @@ def fetch_arxiv_papers(max_results: int = 5):
     return papers
 
 
+def _get_static_fallback(paper: dict) -> dict:
+    """Аварійний фолбек на випадок вичерпання квот усіх моделей одночасно."""
+    return {
+        "predicted_skill": "Frontier AI Systems",
+        "predicted_role_en": "AI Systems Engineer",
+        "predicted_role_ua": "Інженер систем ШІ",
+        "signal_summary_en": paper["title"][:150],
+        "signal_summary_ua": paper["title"][:150],
+    }
+
+
 def analyze_paper_trends(paper: dict) -> dict:
-    """Аналізує статтю за допомогою моделі Gemini з Exponential Backoff та захистом від 429."""
+    """Аналізує статтю за допомогою каскадного перебору моделей Gemini."""
     if not ai_client:
-        return {
-            "predicted_skill": "Emerging AI Architecture",
-            "predicted_role_en": "AI Research Engineer",
-            "predicted_role_ua": "Дослідник архітектур ШІ",
-            "signal_summary_en": paper["title"][:150],
-            "signal_summary_ua": paper["title"][:150],
-        }
+        return _get_static_fallback(paper)
 
     prompt = f"""
-    Analyze this AI research preprint:
+    Analyze this AI preprint:
     Title: {paper['title']}
     Abstract: {paper['summary']}
 
@@ -114,12 +137,10 @@ def analyze_paper_trends(paper: dict) -> dict:
     }}
     """
 
-    # До 2 спроб із безпечною затримкою у разі 429
-    max_retries = 2
-    for attempt in range(max_retries):
+    for model_name in MODEL_CASCADE:
         try:
             response = ai_client.models.generate_content(
-                model="gemini-3.8-flash",
+                model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -127,32 +148,29 @@ def analyze_paper_trends(paper: dict) -> dict:
                 ),
             )
             raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
-            return json.loads(raw_text)
-        except Exception as e:
-            err_msg = str(e)
-            logging.warning(f"Спроба {attempt + 1}/{max_retries} для {paper['arxiv_id']} зазнала помилки: {err_msg}")
-            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                # Пауза для відновлення квоти Free Tier
-                time.sleep(30)
-            else:
-                time.sleep(5)
+            data = json.loads(raw_text)
+            logging.info(f"Успішний аналіз статті {paper['arxiv_id']} через модель {model_name}")
+            return data
 
-    # Фолбек, щоб скрипт гарантовано не зависав і записав дані
-    return {
-        "predicted_skill": "Frontier AI Systems",
-        "predicted_role_en": "AI Systems Engineer",
-        "predicted_role_ua": "Інженер систем ШІ",
-        "signal_summary_en": paper["title"][:150],
-        "signal_summary_ua": paper["title"][:150],
-    }
+        except Exception as e:
+            err = str(e)
+            if any(marker in err for marker in ["429", "RESOURCE_EXHAUSTED", "503", "404"]):
+                logging.warning(f"Модель {model_name} повернула ліміт/помилку ({err[:80]}...). Перемикання на резервну модель...")
+                time.sleep(2)
+                continue
+            else:
+                logging.error(f"Непередбачена помилка для {model_name}: {err}")
+                break
+
+    logging.error(f"Усі моделі зі списку виявилися недоступними для статті {paper['arxiv_id']}. Застосовано фолбек.")
+    return _get_static_fallback(paper)
 
 
 def run_arxiv_pipeline():
     logging.info("=== START ARXIV INGESTION & ANALYSIS ===")
-    
-    # 5 статей достатньо для регулярного нічного оновлення без перевищення добових і хвилинних квот
+
     papers = fetch_arxiv_papers(max_results=5)
-    logging.info(f"Отримано {len(papers)} робіт. Починаємо обробку через Gemini...")
+    logging.info(f"Отримано {len(papers)} робіт з ArXiv. Розпочинаємо аналіз...")
 
     records = []
     for idx, p in enumerate(papers):
@@ -174,9 +192,9 @@ def run_arxiv_pipeline():
                 "signal_summary": json.dumps(summary_payload, ensure_ascii=False),
             })
 
-        # Пауза 13 секунд між викликами для дотримання ліміту Free Tier (5 запитів на хвилину)
+        # Пауза між запитами проти хвилинного ліміту RPM
         if idx < len(papers) - 1:
-            time.sleep(13)
+            time.sleep(10)
 
     if records:
         res = (
