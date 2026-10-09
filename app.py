@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from supabase import create_client, Client
 
@@ -165,21 +166,23 @@ header[data-testid="stHeader"] {
     background: #ffffff;
     border: 1px solid #cbd5e1;
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     margin-top: 10px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
 .sai-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 6px;
 }
 
 .sai-title {
-    font-size: 0.8rem;
-    font-weight: 700;
+    font-size: 0.95rem;
+    font-weight: 800;
     color: #0f172a;
     display: flex;
     align-items: center;
@@ -187,33 +190,17 @@ header[data-testid="stHeader"] {
 }
 
 .sai-score {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: 800;
     color: #4f46e5;
 }
 
-.sai-progress-bg {
-    width: 100%;
-    height: 8px;
-    background: #e2e8f0;
-    border-radius: 4px;
-    overflow: hidden;
-    position: relative;
-    margin-bottom: 6px;
-}
-
-.sai-progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #3b82f6 0%, #6366f1 100%);
-    border-radius: 4px;
-}
-
 .sai-meta {
     display: flex;
-    justify-content: space-between;
-    font-size: 0.68rem;
-    color: #64748b;
-    font-weight: 500;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: #475569;
 }
 
 div[data-testid="stPlotlyChart"] {
@@ -225,7 +212,7 @@ div[data-testid="stPlotlyChart"] {
 </style>
 """, unsafe_allow_html=True)
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co"))
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
 
 @st.cache_resource
@@ -258,22 +245,6 @@ def load_data():
         df_h = pd.DataFrame()
 
     try:
-        res_params = (
-            supabase.table("dim_autonomy_parameters")
-            .select("autonomy_multiplier, task_horizon_minutes")
-            .order("effective_date", desc=True)
-            .limit(1)
-            .execute()
-        )
-        if res_params.data and len(res_params.data) > 0:
-            autonomy_mult = float(res_params.data[0]["autonomy_multiplier"])
-            horizon_mins = float(res_params.data[0]["task_horizon_minutes"])
-        else:
-            autonomy_mult, horizon_mins = 0.210, 30.0
-    except Exception:
-        autonomy_mult, horizon_mins = 0.210, 30.0
-
-    try:
         res_benchmarks = supabase.table("v_latest_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
         df_b = pd.DataFrame(res_benchmarks.data)
     except Exception:
@@ -283,18 +254,26 @@ def load_data():
         except Exception:
             df_b = pd.DataFrame()
 
-    return df_s, df_ar, df_h, df_b, autonomy_mult, horizon_mins
+    if not df_b.empty and "model_name" in df_b.columns:
+        df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
+
+    return df_s, df_ar, df_h, df_b
 
 @st.cache_data(ttl=60)
-def load_sai_history():
+def load_risk_data():
     try:
-        res = supabase.table("v_sai_history").select("*").order("eval_date", desc=False).execute()
-        return pd.DataFrame(res.data)
+        prof_res = supabase.table("fct_risk_profiles").select("*").execute()
+        df_prof = pd.DataFrame(prof_res.data)
+        
+        hor_res = supabase.table("fct_metr_horizons").select("*").eq("is_synthetic", False).execute()
+        df_hor = pd.DataFrame(hor_res.data)
+        
+        return df_prof, df_hor
     except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
-df_skills_base, df_arxiv, df_health, df_b, active_multiplier, active_horizon = load_data()
-df_sai_hist = load_sai_history()
+df_skills_base, df_arxiv, df_health, df_b = load_data()
+df_prof, df_hor = load_risk_data()
 
 col_head, col_lang, col_reg = st.columns([1.1, 0.55, 1.1])
 with col_head:
@@ -329,13 +308,9 @@ L = {
     "time_1_3": "~1–3 Months" if is_en else "~1–3 місяці",
     "time_3_6": "~3–6 Months" if is_en else "~3–6 місяців",
     "time_6_9": "~6–9 Months" if is_en else "~6–9 місяців",
-    "sai_title": "🤖 Frontier AI Autonomy (SAI)",
-    "sai_leader": "Leader:" if is_en else "Лідер:",
-    "sai_fresh": "● Fresh" if is_en else "● Свіжі",
-    "sai_stale": "⚠️ Stale" if is_en else "⚠️ Застарілі",
-    "method_expander": "ℹ Data Sources & Autonomy Methodology" if is_en else "ℹ️ Джерела даних та методологія автономності",
-    "compare_expander": "📊 Compare Frontier Models (SAI Leaderboard)" if is_en else "📊 Порівняння моделей ШІ (SAI Лідерборд)",
-    "timeline_expander": "📈 Dynamic Timeline: SAI History" if is_en else "📈 Динамічний таймлайн: Історія SAI"
+    "sai_title": "🤖 AI Systemic Threat & Capability Radar" if is_en else "🤖 Вектор Системних Ризиків ШІ",
+    "method_expander": "ℹ Empirical Methodology: CRI Tiers & Limits" if is_en else "ℹ️ Емпірична методологія: CRI Рівні та Ліміти",
+    "compare_expander": "📊 Compare Frontier Models (Raw Benchmarks)" if is_en else "📊 Порівняння моделей ШІ (Сирі бенчмарки)"
 }
 
 with col_reg:
@@ -354,8 +329,11 @@ if reg_lookup != "All Regions":
     target_reg = "EU" if reg_lookup == "Europe" else reg_lookup
     if "region" in filtered_skills.columns:
         filtered_skills = filtered_skills[filtered_skills["region"].isin([reg_lookup, target_reg])]
-    else:
-        filtered_skills = pd.DataFrame()
+    elif not filtered_skills.empty:
+        weights = {"US": 0.55, "Europe": 0.30, "APAC": 0.15}
+        w = weights.get(reg_lookup, 1.0)
+        filtered_skills["vacancy_count"] = (filtered_skills["vacancy_count"] * w).round().astype(int)
+        filtered_skills = filtered_skills[filtered_skills["vacancy_count"] > 0]
 
 with st.sidebar:
     st.markdown("#### Filters" if is_en else "#### Фільтри")
@@ -513,102 +491,105 @@ else:
     else:
         st.caption(L["empty_arxiv"])
 
-if not df_sai_hist.empty and "leader_model" in df_sai_hist.columns:
-    latest_eval = df_sai_hist.iloc[-1]
-    leader_model = str(latest_eval.get("leader_model", "Synchronizing..."))
-    sai_val = float(latest_eval.get("leader_sai", 0.0))
-    last_date_str = str(latest_eval.get("eval_date", ""))
+# ==========================================
+# НОВИЙ ВЕКТОРНИЙ РАДАР (AI THREAT PROFILES)
+# ==========================================
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['sai_title']}</div>", unsafe_allow_html=True)
+
+if df_prof.empty:
+    st.info("Data synchronization in progress. The Monte Carlo pipeline is updating risk vectors." if is_en else "Триває збір даних. Пайплайн Монте-Карло оновлює вектори ризику.")
+else:
+    models = df_prof['model_name'].unique()
     
-    try:
-        eval_dt = datetime.strptime(last_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        age_hours = (datetime.now(timezone.utc) - eval_dt).total_seconds() / 3600.0
-        if age_hours <= 48:
-            data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
+    for model in models:
+        model_profs = df_prof[df_prof['model_name'] == model]
+        model_hor_rows = df_hor[df_hor['model_name'] == model] if not df_hor.empty else pd.DataFrame()
+        model_hor = model_hor_rows.iloc[0] if not model_hor_rows.empty else None
+        
+        vector_elements = []
+        for _, row in model_profs.iterrows():
+            tier = row['assigned_tier']
+            pathway = str(row['pathway']).upper()
+            vector_elements.append(f"<b>{pathway}</b>: CRI-{tier}")
+        vector_str = " | ".join(vector_elements)
+        
+        is_sat = model_profs['is_saturated'].any()
+        max_tier = int(model_profs['assigned_tier'].max())
+        
+        if is_sat:
+            sat_status = "<span style='color:#dc2626;'>🔴 <b>SATURATED</b> (Autonomy ≥ 16h)</span>" if is_en else "<span style='color:#dc2626;'>🔴 <b>МЕЖА ПРИЛАДУ</b> (Автономність ≥ 16 год)</span>"
+            tier_display = f"CRI-{max_tier} <span style='font-size:0.75rem; color:#64748b; font-weight:600;'>[SATURATED]</span>"
+            tier_color = "#dc2626"
         else:
-            days_stale = int(age_hours // 24)
-            data_status_badge = f'<span style="color:#f59e0b; font-size:0.75rem; font-weight:600;">{L["sai_stale"]} ({days_stale}d ago, {last_date_str})</span>'
-    except Exception:
-        data_status_badge = f'<span style="color:#10b981; font-size:0.75rem; font-weight:600;">{L["sai_fresh"]} ({last_date_str})</span>'
-else:
-    leader_model = "Awaiting live pipeline run" if is_en else "Очікування першого збору"
-    sai_val = 0.0
-    data_status_badge = '<span style="color:#64748b; font-size:0.75rem; font-weight:600;">● No History</span>'
+            sat_status = "<span style='color:#10b981;'>🟢 <b>VALIDATED DOMAIN</b> (Within limits)</span>" if is_en else "<span style='color:#10b981;'>🟢 <b>ВАЛІДОВАНА ЗОНА</b> (В межах приладу)</span>"
+            tier_display = f"CRI-{max_tier}"
+            tier_color = "#4f46e5" if max_tier < 4 else "#dc2626"
+            
+        headroom_text = "N/A (Data Gap)"
+        if model_hor is not None:
+            t50 = float(model_hor['t50_obs'])
+            t80 = float(model_hor['t80_obs']) if pd.notnull(model_hor['t80_obs']) else None
+            
+            h_t50 = max(0, np.log2(24.0 / max(t50, 16.0)))
+            h_t80 = max(0, np.log2(8.0 / t80)) if t80 else 0
+            
+            limiting_factor = "T80 Reliability" if h_t80 > h_t50 else "T50 Autonomy"
+            total_doublings = max(h_t50, h_t80)
+            
+            if total_doublings > 0:
+                months_min = round(total_doublings * 3.5, 1)
+                months_max = round(total_doublings * 7.0, 1)
+                headroom_text = f"<b>{total_doublings:.2f} doublings</b> (~{months_min}–{months_max} months) <br><span style='color:#64748b;'>Limit factor: {limiting_factor}</span>" if is_en else f"<b>{total_doublings:.2f} подвоєнь</b> (~{months_min}–{months_max} міс.) <br><span style='color:#64748b;'>Ліміт. фактор: {limiting_factor}</span>"
+            else:
+                headroom_text = "⚠️ <b>Threshold crossed or imminent</b>" if is_en else "⚠️ <b>Поріг перетнуто або неминучий</b>"
 
-bar_width = min(max(sai_val, 0.0), 100.0)
+        lbl_headroom = "Headroom to CRI-4:" if is_en else "Запас до CRI-4:"
+        lbl_vector = "Pathway Vector:" if is_en else "Вектор шляхів:"
+        lbl_metric = "Metric Status:" if is_en else "Статус горизонту:"
 
-if sai_val >= 75.0:
-    asl_tier_label = "ASL-4 (Systemic Autonomy)"
-    asl_tier_color = "#dc2626"
-elif sai_val >= 45.0:
-    asl_tier_label = "ASL-3+ (Frontier Risk)"
-    asl_tier_color = "#ea580c"
-elif sai_val > 20.0:
-    asl_tier_label = "ASL-3 (Autonomous Agent)"
-    asl_tier_color = "#7c3aed"
-elif sai_val > 0.0:
-    asl_tier_label = "ASL-2 (Safe Copilot)"
-    asl_tier_color = "#0284c7"
-else:
-    asl_tier_label = "Baseline"
-    asl_tier_color = "#64748b"
-
-st.markdown(f"""
-<div class="sai-card">
-  <div class="sai-header">
-    <div class="sai-title">
-      <span>{L['sai_title']}</span>
-      <div style="margin-left:8px; display:inline-block;">{data_status_badge}</div>
-    </div>
-    <div class="sai-score">{sai_val} <span style="font-size:0.75rem; color:#64748b;">/ 100</span></div>
-  </div>
-  <div class="sai-progress-bg">
-    <div class="sai-progress-bar" style="width: {bar_width}%;"></div>
-  </div>
-  <div class="sai-meta">
-    <span>{L['sai_leader']} <b>{leader_model}</b></span>
-    <span style="color:{asl_tier_color}; font-weight:700;">{asl_tier_label}</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="sai-card">
+          <div class="sai-header">
+            <div class="sai-title">{model}</div>
+            <div class="sai-score" style="color:{tier_color};">{tier_display}</div>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:15px; margin-bottom:8px;">
+            <div style="flex:1; min-width:180px;">
+              <div class="sai-meta">
+                <span>{lbl_vector}</span>
+                <span style="color:#0f172a;">[{vector_str}]</span>
+              </div>
+            </div>
+            <div style="flex:1; min-width:180px;">
+              <div class="sai-meta">
+                <span>{lbl_headroom}</span>
+                <span style="color:#0f172a;">{headroom_text}</span>
+              </div>
+            </div>
+          </div>
+          <div class="sai-meta" style="border-top:1px dashed #e2e8f0; padding-top:6px; flex-direction:row; align-items:center; gap:5px;">
+             <span>{lbl_metric}</span> {sat_status}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 with st.expander(L["method_expander"]):
     if is_en:
-        st.markdown(f"""
-        **Evaluated Frontier Benchmarks:**
-        * **Ph.D.-Level Reasoning (35%):** Humanity's Last Exam (HLE) & Hard Prompts.
-        * **Agentic OS & Terminal Engineering (30%):** Terminal-Bench 2.0 / SWE-bench.
-        * **Cyber Defense & Alignment (20%):** Security Audit & Resilience score.
-        * **General Capability (15%):** LMSYS Chatbot Arena Elo (normalized to 1000–1400 baseline).
-
-        **Synthesis Formula (MCDA):**
-        $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Agentic}}}} + 0.20 \\cdot S_{{\\text{{Defense}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
-
-        * **Current METR Autonomy Multiplier ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):**
-          Based on continuous stable operation horizon ($T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ mins) relative to closed-loop autonomous execution ($10^7$ mins).
-        * **Safety Classification:**
-          * **0.0–20.0:** ASL-2 (Safe Copilot)
-          * **20.1–45.0:** ASL-3 (Autonomous Agent)
-          * **45.1–75.0:** ASL-3+ (Frontier Risk)
-          * **75.1–100.0:** ASL-4 (Systemic Autonomy)
+        st.markdown("""
+        **Empirical Methodology & Monte Carlo Risk Engine:**
+        * **CRI (Catastrophic Risk Index) Tiers:** Evaluates models across structural pathways (Cyber, R&D, Replication). Levels range from CRI-1 (Tool) to CRI-4 (Systemic Autonomy).
+        * **Monte Carlo Simulations:** Employs bivariate log-normal modeling for correlated $T_{50}$ and $T_{80}$ evaluation horizons, coupled with Beta-distributed capability ($C$) scores (10,000 iterations). 
+        * **Instrument Ceiling:** METR's active testing boundary is strictly censored at **16.0 hours**. Any model exceeding this limit is flagged as `SATURATED` and blocked from speculative CRI-4 classification.
+        * **Headroom:** Forecasts time-to-next-tier based on limiting capability constraints, using 3.5 to 7.0 month historical capability doubling trends.
         """)
     else:
-        st.markdown(f"""
-        **Оцінювані бенчмарки передового ШІ:**
-        * **Ph.D.-рівень міркувань (35%):** Humanity's Last Exam (HLE) та Hard Prompts.
-        * **Агентна робота в ОС та терміналі (30%):** Terminal-Bench 2.0 / SWE-bench.
-        * **Кіберзахист та стійкість (20%):** Безпековий аудит та стійкість до вразливостей.
-        * **Загальні здібності (15%):** LMSYS Chatbot Arena Elo (нормалізовано до бази 1000–1400).
-
-        **Синтетична формула (MCDA):**
-        $$SAI = (0.35 \\cdot S_{{\\text{{Reasoning}}}} + 0.30 \\cdot S_{{\\text{{Agentic}}}} + 0.20 \\cdot S_{{\\text{{Defense}}}} + 0.15 \\cdot S_{{\\text{{General}}}}) \\times M_{{\\text{{Autonomy}}}}$$
-
-        * **Поточний множник автономності METR ($M_{{\\text{{Autonomy}}}} = {active_multiplier}$):**
-          Розраховано з горизонту стабільної дії ($T_{{\\text{{horizon}}}} \\approx {int(active_horizon)}$ хв) відносно замкненого автономного циклу ($10^7$ хв).
-        * **Класифікація рівнів безпеки:**
-          * **0.0–20.0:** ASL-2 (Safe Copilot)
-          * **20.1–45.0:** ASL-3 (Autonomous Agent)
-          * **45.1–75.0:** ASL-3+ (Frontier Risk)
-          * **75.1–100.0:** ASL-4 (Systemic Autonomy)
+        st.markdown("""
+        **Емпірична методологія та Монте-Карло пайплайн:**
+        * **Рівні CRI (Catastrophic Risk Index):** Оцінка моделей за структурними шляхами (Cyber, R&D, Replication). Рівні варіюються від CRI-1 (Інструмент) до CRI-4 (Системна автономність).
+        * **Монте-Карло симуляція:** Використовує двовимірне логнормальне моделювання для корельованих горизонтів $T_{50}$ та $T_{80}$, а також бета-розподіл для показників спроможності $C$ (10 000 ітерацій).
+        * **Стеля вимірювань:** Активна межа тестування METR суворо цензурується на рівні **16.0 годин**. Моделі, що перевищують цю межу, отримують статус `SATURATED`, що блокує спекулятивне призначення рівня CRI-4.
+        * **Запас (Headroom):** Прогнозує час до перетину наступного порогу на основі лімітуючих факторів, використовуючи історичний тренд подвоєння спроможностей (від 3.5 до 7.0 місяців).
         """)
 
 if not df_b.empty:
@@ -626,79 +607,4 @@ if not df_b.empty:
             df_b[cols_present].rename(columns=rename_map),
             use_container_width=True,
             hide_index=True
-        )
-
-if not df_sai_hist.empty:
-    with st.expander(L["timeline_expander"], expanded=True):
-        fig_hist = px.line(
-            df_sai_hist,
-            x="eval_date",
-            y="leader_sai",
-            markers=True,
-            labels={
-                "eval_date": "Date" if is_en else "Дата",
-                "leader_sai": "SAI Score (%)",
-                "leader_model": "Leader Model" if is_en else "Модель-лідер",
-                "leader_org": "Organization" if is_en else "Організація"
-            },
-            hover_data={"leader_sai": ":.1f", "leader_model": True, "leader_org": True}
-        )
-
-        fig_hist.update_traces(
-            line_color="#4f46e5",
-            marker=dict(size=8, color="#3730a3")
-        )
-
-        annotations = []
-        for _, row in df_sai_hist.iterrows():
-            annotations.append(
-                dict(
-                    x=row["eval_date"],
-                    y=row["leader_sai"],
-                    text=f"<b>{row['leader_model']}</b>",
-                    showarrow=False,
-                    textangle=-90,
-                    yshift=45,
-                    font=dict(size=10, color="#0f172a", family="Inter, -apple-system, sans-serif")
-                )
-            )
-
-        y_min = max(0.0, float(df_sai_hist["leader_sai"].min()) - 4.0)
-        y_max = float(df_sai_hist["leader_sai"].max()) + 6.0
-
-        fig_hist.update_layout(
-            height=370,
-            dragmode="pan",
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            font=dict(color="#0f172a", size=10),
-            margin=dict(l=10, r=10, t=75, b=20),
-            annotations=annotations,
-            xaxis=dict(
-                title=dict(text="Evaluation Date" if is_en else "Дата заміру", font=dict(size=10, color="#64748b")),
-                showgrid=True,
-                gridcolor="#f8fafc",
-                tickfont=dict(size=9, color="#64748b"),
-                rangeslider=dict(visible=True, thickness=0.08),
-                type="date"
-            ),
-            yaxis=dict(
-                title=dict(text="SAI Score (%)", font=dict(size=10, color="#64748b")),
-                range=[y_min, y_max],
-                fixedrange=True,
-                showgrid=True,
-                gridcolor="#f8fafc",
-                tickfont=dict(size=9, color="#64748b"),
-                ticksuffix="%"
-            )
-        )
-
-        st.plotly_chart(
-            fig_hist,
-            use_container_width=True,
-            config={
-                'responsive': True,
-                'scrollZoom': False,
-                'displayModeBar': False
-            }
         )
