@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests google-genai supabase pandas python-dotenv
+          pip install requests google-genai supabase pandas python-dotenv numpy scipy
 
       - name: Run Market Vacancies Pipeline (Adzuna + Gemini)
         env:
@@ -58,3 +58,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python collector_arxiv.py
+
+      - name: Evaluate AI Risk Profiles (Monte Carlo)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python evaluate_risks.py
