@@ -492,7 +492,7 @@ else:
         st.caption(L["empty_arxiv"])
 
 # ==========================================
-# НОВИЙ ВЕКТОРНИЙ РАДАР (AI THREAT PROFILES)
+# ВЕКТОРНИЙ РАДАР (AI THREAT PROFILES)
 # ==========================================
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['sai_title']}</div>", unsafe_allow_html=True)
@@ -500,9 +500,42 @@ st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; mar
 if df_prof.empty:
     st.info("Data synchronization in progress. The Monte Carlo pipeline is updating risk vectors." if is_en else "Триває збір даних. Пайплайн Монте-Карло оновлює вектори ризику.")
 else:
-    models = df_prof['model_name'].unique()
+    # -------------------------------------------------------------
+    # РАНЖУВАННЯ МОДЕЛЕЙ ЗА СПАДАННЯМ РИЗИКУ (CRI Tier + Headroom)
+    # -------------------------------------------------------------
+    ranking_records = []
+    unique_model_names = df_prof['model_name'].unique()
     
-    for model in models:
+    for m_name in unique_model_names:
+        m_subset = df_prof[df_prof['model_name'] == m_name]
+        m_hor_sub = df_hor[df_hor['model_name'] == m_name] if not df_hor.empty else pd.DataFrame()
+        
+        m_max_tier = int(m_subset['assigned_tier'].max())
+        
+        # Обчислення запасу (чим менше doublings, тим вища небезпека)
+        m_doublings = 999.0
+        if not m_hor_sub.empty:
+            h_row = m_hor_sub.iloc[0]
+            t50_val = float(h_row['t50_obs'])
+            t80_val = float(h_row['t80_obs']) if pd.notnull(h_row.get('t80_obs')) else None
+            
+            calc_h_t50 = max(0.0, np.log2(24.0 / max(t50_val, 16.0)))
+            calc_h_t80 = max(0.0, np.log2(8.0 / t80_val)) if t80_val else 0.0
+            m_doublings = max(calc_h_t50, calc_h_t80)
+            
+        ranking_records.append({
+            "model_name": m_name,
+            "max_tier": m_max_tier,
+            "doublings": m_doublings
+        })
+        
+    df_sorted_ranking = pd.DataFrame(ranking_records).sort_values(
+        by=["max_tier", "doublings"],
+        ascending=[False, True]
+    )
+    sorted_models = df_sorted_ranking['model_name'].tolist()
+
+    for model in sorted_models:
         model_profs = df_prof[df_prof['model_name'] == model]
         model_hor_rows = df_hor[df_hor['model_name'] == model] if not df_hor.empty else pd.DataFrame()
         model_hor = model_hor_rows.iloc[0] if not model_hor_rows.empty else None
@@ -529,10 +562,10 @@ else:
         headroom_text = "N/A (Data Gap)"
         if model_hor is not None:
             t50 = float(model_hor['t50_obs'])
-            t80 = float(model_hor['t80_obs']) if pd.notnull(model_hor['t80_obs']) else None
+            t80 = float(model_hor['t80_obs']) if pd.notnull(model_hor.get('t80_obs')) else None
             
-            h_t50 = max(0, np.log2(24.0 / max(t50, 16.0)))
-            h_t80 = max(0, np.log2(8.0 / t80)) if t80 else 0
+            h_t50 = max(0.0, np.log2(24.0 / max(t50, 16.0)))
+            h_t80 = max(0.0, np.log2(8.0 / t80)) if t80 else 0.0
             
             limiting_factor = "T80 Reliability" if h_t80 > h_t50 else "T50 Autonomy"
             total_doublings = max(h_t50, h_t80)
