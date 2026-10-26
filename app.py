@@ -618,7 +618,7 @@ else:
 # КОЛО КОНТРОЛЮ / АВТОНОМНОСТІ ДІЙ ШІ
 # ==========================================
 CIRCLE_SEGMENTS = {
-    "approved":       ("🟢 Контроль-контроль", "🟢 Approved before execution",  "#15803d"),
+    "approved":       ("🟢 Повний контроль", "🟢 Approved before execution",  "#15803d"),
     "oversight":      ("🟩 Нагляд",            "🟩 Oversight",                  "#86efac"),
     "auto_in_bounds": ("🟡 Автономно в межах", "🟡 Autonomous within bounds",   "#f59e0b"),
     "out_of_bounds":  ("🔴 Поза межами",       "🔴 Out of bounds",              "#dc2626"),
