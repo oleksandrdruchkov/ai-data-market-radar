@@ -244,20 +244,7 @@ def load_data():
     except Exception:
         df_h = pd.DataFrame()
 
-    try:
-        res_benchmarks = supabase.table("v_latest_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
-        df_b = pd.DataFrame(res_benchmarks.data)
-    except Exception:
-        try:
-            res_benchmarks = supabase.table("fct_ai_benchmarks").select("*").order("arena_elo", desc=True).execute()
-            df_b = pd.DataFrame(res_benchmarks.data)
-        except Exception:
-            df_b = pd.DataFrame()
-
-    if not df_b.empty and "model_name" in df_b.columns:
-        df_b = df_b[df_b["model_name"] != "Gemini 2.5 Flash"].copy()
-
-    return df_s, df_ar, df_h, df_b
+    return df_s, df_ar, df_h
 
 @st.cache_data(ttl=60)
 def load_risk_data():
@@ -281,10 +268,13 @@ def load_circle_data():
     except Exception:
         return pd.DataFrame()
 
-df_skills_base, df_arxiv, df_health, df_b = load_data()
+df_skills_base, df_arxiv, df_health = load_data()
 df_prof, df_hor = load_risk_data()
 df_circ_raw = load_circle_data()
 
+# ==========================================
+# ШАПКА: СЕЛЕКТОР МОВИ ТА РЕГІОНІВ
+# ==========================================
 col_head, col_lang, col_reg = st.columns([1.1, 0.55, 1.1])
 with col_head:
     st.markdown("<div style='font-weight:800; font-size:1.05rem; color:#0f172a; padding-top:4px;'>📡 Market Radar</div>", unsafe_allow_html=True)
@@ -321,7 +311,7 @@ L = {
     "sai_title": "🤖 AI Systemic Threat & Capability Radar" if is_en else "🤖 Вектор Системних Ризиків ШІ",
     "circle_title": "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ",
     "method_expander": "ℹ Empirical Methodology: CRI Tiers & Limits" if is_en else "ℹ️ Емпірична методологія: CRI Рівні та Ліміти",
-    "compare_expander": "📊 Compare Frontier Models (Raw Benchmarks)" if is_en else "📊 Порівняння моделей ШІ (Сирі бенчмарки)"
+    "circle_method_expander": "📐 Methodology: Control vs Autonomy Action Circle" if is_en else "📐 Методологія розрахунку: Контроль та автономність дій ШІ"
 }
 
 with col_reg:
@@ -336,6 +326,7 @@ with col_reg:
 reg_lookup = "All Regions" if selected_region in ["All Regions", "Всі регіони"] else selected_region
 filtered_skills = df_skills_base.copy()
 
+# Логіка фільтрації навичок та вакансій за обраним макрорегіоном
 if reg_lookup != "All Regions":
     target_reg = "EU" if reg_lookup == "Europe" else reg_lookup
     if "region" in filtered_skills.columns:
@@ -696,7 +687,7 @@ if not matching_rows.empty:
         """, unsafe_allow_html=True)
 
 # ==========================================
-# МЕТОДОЛОГІЯ ТА СИРІ БЕНЧМАРКИ
+# МЕТОДОЛОГІЯ: ЕМПІРИЧНИЙ РАДАР ТА ACTION CIRCLE
 # ==========================================
 with st.expander(L["method_expander"]):
     if is_en:
@@ -716,19 +707,53 @@ with st.expander(L["method_expander"]):
         * **Запас (Headroom):** Прогнозує час до перетину наступного порогу на основі лімітуючих факторів, використовуючи історичний тренд подвоєння спроможностей (від 3.5 до 7.0 місяців).
         """)
 
-if not df_b.empty:
-    with st.expander(L["compare_expander"]):
-        cols_present = [c for c in ["model_name", "organization", "arena_elo", "coding_score", "hard_prompts_score", "license"] if c in df_b.columns]
-        rename_map = {
-            "model_name": "Model" if is_en else "Модель",
-            "organization": "Org" if is_en else "Організація",
-            "arena_elo": "Arena Elo",
-            "coding_score": "Coding %" if is_en else "Код %",
-            "hard_prompts_score": "Hard Prompts %" if is_en else "Складні промпти %",
-            "license": "License" if is_en else "Ліцензія"
-        }
-        st.dataframe(
-            df_b[cols_present].rename(columns=rename_map),
-            use_container_width=True,
-            hide_index=True
-        )
+# Заміна розділу сирих бенчмарків на методологію Action Circle
+with st.expander(L["circle_method_expander"]):
+    if is_en:
+        st.markdown("""
+        ### 1. Mathematical Formulation & 100% Boundary
+        The Action Circle reflects the proportion of recorded AI agent actions in standardized evaluation environments:
+        $$N_{\\text{total}} = N_{\\text{approved}} + N_{\\text{oversight}} + N_{\\text{auto}} + N_{\\text{out}}$$
+        $$P_i = \\frac{N_i}{N_{\\text{total}}} \\times 100\\%$$
+
+        All telemetry events are aggregated in a verified **1:1** ratio without artificial extrapolations or scaling multipliers.
+
+        ---
+
+        ### 2. Operational Control Segments
+        * **🟢 Full Control (`approved`):** Actions requiring mandatory explicit human operator authorization prior to execution (merged Pull Requests, operator-approved sensitive CLI/tool calls).
+        * **🟩 Revision (`oversight`):** Actions executed autonomously by the model but queued for post-hoc human review, code audit, or verification.
+        * **🟡 Autonomous within bounds (`auto_in_bounds`):** Successful autonomous steps executed inside containerized limits and tool sandbox parameters without human intervention.
+        * **🔴 Out of bounds (`out_of_bounds`):** Verified sandbox escapes, policy violations, unauthorized network/system calls, and real-world incidents.
+
+        ---
+
+        ### 3. Primary Data Registries
+        * **AI Incident Database (`incidentdatabase.ai`):** Public GraphQL API capturing verified real-world systemic failures and boundary violations.
+        * **SWE-bench Verified (`swe-bench/SWE-bench`):** Standard repository telemetry tracking pull request oversight and post-execution engineering audits.
+        * **UK AISI Inspect Platform (`UKGovernmentBEIS/inspect_ai`):** Linux/Docker execution logs documenting tool approvals and sandbox-isolated autonomous steps.
+        """)
+    else:
+        st.markdown("""
+        ### 1. Математична формула та баланс 100%
+        Кругова діаграма відображає пропорції дій автономних агентів у стандартизованих середовищах виконання:
+        $$N_{\\text{total}} = N_{\\text{approved}} + N_{\\text{oversight}} + N_{\\text{auto}} + N_{\\text{out}}$$
+        $$P_i = \\frac{N_i}{N_{\\text{total}}} \\times 100\\%$$
+
+        Усі події збираються у безпосередньому співвідношенні **1:1** без застосування суб'єктивних коефіцієнтів масштабування.
+
+        ---
+
+        ### 2. Сегменти контролю дій
+        * **🟢 Full Control (`approved`):** Дії, що вимагали попереднього схвалення оператором перед виконанням (підтверджені та злиті PR, дозволені людиною системні виклики інструментів).
+        * **🟩 Перегляд (`oversight`):** Дії, виконані агентом автономно, але які підлягали подальшому нагляду (код-рев'ю, черга аудиту, незакриті перевірки).
+        * **🟡 Автономно в межах (`auto_in_bounds`):** Успішні автономні кроки системи без втручання оператора в дозволених межах пісочниці та наданих інструментів.
+        * **🔴 Поза межами (`out_of_bounds`):** Верифіковані інциденти порушення меж: спроби виходу з контейнера (sandbox escape), несанкціоновані запити або реальні зафіксовані збої.
+
+        ---
+
+        ### 3. Первинні відкриті джерела телеметрії
+        * **AI Incident Database (`incidentdatabase.ai`):** Відкритий GraphQL API для фіксації підтверджених інцидентів порушення рамок безпеки.
+        * **SWE-bench Verified (`swe-bench/SWE-bench`):** Журнали виконання інженерних завдань і статусів аудиту Pull Requests.
+        * **UK AISI Inspect Platform (`UKGovernmentBEIS/inspect_ai`):** Логи виконання інструментальних викликів у захищених контейнерах Linux/Docker.
+        """)
