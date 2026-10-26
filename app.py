@@ -607,6 +607,77 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
+# ==========================================
+# КОЛО КОНТРОЛЮ / АВТОНОМНОСТІ ДІЙ ШІ
+# ==========================================
+CIRCLE_SEGMENTS = {
+    "approved":       ("🟢 Контроль-контроль", "🟢 Approved before execution",  "#2e7d32"),
+    "oversight":      ("🟩 Нагляд",            "🟩 Oversight",                 "#81c784"),
+    "auto_in_bounds": ("🟡 Автономно в межах", "🟡 Autonomous within bounds",  "#fbc02d"),
+    "out_of_bounds":  ("🔴 Поза межами",       "🔴 Out of bounds",             "#c62828"),
+}
+
+@st.cache_data(ttl=300)
+def load_circle_data():
+    try:
+        res = supabase.table("fct_action_circle_monthly").select("*").order("period").execute()
+        return pd.DataFrame(res.data)
+    except Exception:
+        return pd.DataFrame()
+
+st.markdown("<br>", unsafe_allow_html=True)
+circle_title = "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ"
+st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{circle_title}</div>", unsafe_allow_html=True)
+
+df_circ = load_circle_data()
+circ_keys = list(CIRCLE_SEGMENTS.keys())
+
+if not df_circ.empty:
+    for k in circ_keys:
+        if k not in df_circ.columns:
+            df_circ[k] = 0
+        df_circ[k] = pd.to_numeric(df_circ[k], errors="coerce").fillna(0)
+
+circ_demo = df_circ.empty
+if circ_demo:
+    df_circ = pd.DataFrame({
+        "period": ["2026-10"],
+        "approved": [25], "oversight": [45], "auto_in_bounds": [29], "out_of_bounds": [1],
+    })
+    st.warning("DEMO data, not real measurements." if is_en else "ДЕМО-дані, не реальні вимірювання.")
+
+circ_periods = sorted(df_circ["period"].astype(str).unique().tolist(), reverse=True)
+circ_period = st.selectbox("Period", circ_periods, label_visibility="collapsed")
+circ_row = df_circ[df_circ["period"].astype(str) == circ_period].iloc[0]
+
+lang_idx = 1 if is_en else 0
+circ_labels = [CIRCLE_SEGMENTS[k][lang_idx] for k in circ_keys]
+circ_values = [int(circ_row[k]) for k in circ_keys]
+circ_colors = {CIRCLE_SEGMENTS[k][lang_idx]: CIRCLE_SEGMENTS[k][2] for k in circ_keys}
+circ_total = sum(circ_values)
+
+if circ_total == 0:
+    st.caption("No data for this period." if is_en else "Немає даних за цей період.")
+else:
+    fig_circ = px.pie(
+        names=circ_labels, values=circ_values, hole=0.55,
+        color=circ_labels, color_discrete_map=circ_colors,
+    )
+    fig_circ.update_traces(textinfo="percent", sort=False)
+    fig_circ.update_layout(
+        height=320, paper_bgcolor="#ffffff",
+        margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", y=-0.05),
+        font=dict(color="#0f172a", size=11),
+    )
+    st.plotly_chart(fig_circ, use_container_width=True, config={'displayModeBar': False})
+    red_share = circ_values[3] / circ_total * 100
+    st.caption(
+        (f"Out of bounds: {red_share:.1f}% (100% = 'Skynet'). Lower bound: only detected and confirmed events."
+         if is_en else
+         f"Поза межами: {red_share:.1f}% (100% = «Скайнет»). Нижня межа: лише виявлені й підтверджені події.")
+    )
+
 with st.expander(L["method_expander"]):
     if is_en:
         st.markdown("""
