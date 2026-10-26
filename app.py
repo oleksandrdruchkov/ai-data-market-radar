@@ -618,10 +618,10 @@ else:
 # КОЛО КОНТРОЛЮ / АВТОНОМНОСТІ ДІЙ ШІ
 # ==========================================
 CIRCLE_SEGMENTS = {
-    "approved":       ("🟢 Повний контроль", "🟢 Approved before execution",  "#15803d"),
-    "oversight":      ("🟩 Нагляд",            "🟩 Oversight",                  "#86efac"),
-    "auto_in_bounds": ("🟡 Автономно в межах", "🟡 Autonomous within bounds",   "#f59e0b"),
-    "out_of_bounds":  ("🔴 Поза межами",       "🔴 Out of bounds",              "#dc2626"),
+    "approved":       ("🟢 Full Control",        "🟢 Full Control",              "#15803d"),
+    "oversight":      ("🟩 Перегляд",             "🟩 Revision",                  "#86efac"),
+    "auto_in_bounds": ("🟡 Автономно в межах",   "🟡 Autonomous within bounds",  "#f59e0b"),
+    "out_of_bounds":  ("🔴 Поза межами",         "🔴 Out of bounds",             "#dc2626"),
 }
 
 st.markdown("<br>", unsafe_allow_html=True)
@@ -661,10 +661,11 @@ if not matching_rows.empty:
     if circ_total == 0:
         st.caption("No data for this period." if is_en else "Немає даних за цей період.")
     else:
+        # hole=0 робить діаграму повністю суцільною до центру
         fig_circ = px.pie(
             names=circ_labels,
             values=circ_values,
-            hole=0.60,
+            hole=0,
             color=circ_labels,
             color_discrete_map=circ_colors,
         )
@@ -679,19 +680,16 @@ if not matching_rows.empty:
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             margin=dict(l=20, r=20, t=20, b=20),
-            font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI"),
-            annotations=[dict(
-                text=f"<b>{circ_total:,}</b><br><span style='font-size:0.7rem;color:#64748b;'>{'Actions' if is_en else 'Дій'}</span>",
-                x=0.5, y=0.5, font_size=13, showarrow=False
-            )]
+            font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI")
         )
         st.plotly_chart(fig_circ, use_container_width=True, config={'displayModeBar': False})
 
         red_share = (circ_values[3] / circ_total) * 100 if circ_total > 0 else 0
+        total_lbl = "Total actions" if is_en else "Всього дій"
         st.caption(
-            (f"Out of bounds: **{red_share:.2f}%** (100% = 'Skynet'). Lower bound: only detected and confirmed events."
+            (f"{total_lbl}: **{circ_total:,}** | Out of bounds: **{red_share:.2f}%** (100% = 'Skynet'). Lower bound: only detected and confirmed events."
              if is_en else
-             f"Поза межами: **{red_share:.2f}%** (100% = «Скайнет»). Нижня межа: лише виявлені й підтверджені події.")
+             f"{total_lbl}: **{circ_total:,}** | Поза межами: **{red_share:.2f}%** (100% = «Скайнет»). Нижня межа: лише виявлені й підтверджені події.")
         )
 
 # ==========================================
