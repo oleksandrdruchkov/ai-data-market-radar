@@ -4,7 +4,7 @@ on:
   schedule:
     # Щоденний автоматичний запуск о 03:00 UTC
     - cron: '0 3 * * *'
-  # Можливість запуску вручну з вкладки Actions у GitHub
+  # Можливість ручного запуску з вкладки Actions у GitHub
   workflow_dispatch:
 
 jobs:
@@ -65,3 +65,10 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           python evaluate_risks.py
+
+      - name: Ingest Action Circle Telemetry
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python collector_action_circle.py
