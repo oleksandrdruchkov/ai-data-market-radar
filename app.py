@@ -707,24 +707,31 @@ with st.expander(L["method_expander"]):
         * **Запас (Headroom):** Прогнозує час до перетину наступного порогу на основі лімітуючих факторів, використовуючи історичний тренд подвоєння спроможностей (від 3.5 до 7.0 місяців).
         """)
 
-# Заміна розділу сирих бенчмарків на методологію Action Circle
 with st.expander(L["circle_method_expander"]):
     if is_en:
         st.markdown("""
-        ### 1. Mathematical Formulation & 100% Boundary
-        The Action Circle reflects the proportion of recorded AI agent actions in standardized evaluation environments:
+        ### 1. Mathematical Balance & 100% Boundary
+        The Action Circle visualizes the complete distribution of recorded AI agent behaviors across standardized benchmarks and audit registries:
+
         $$N_{\\text{total}} = N_{\\text{approved}} + N_{\\text{oversight}} + N_{\\text{auto}} + N_{\\text{out}}$$
+
         $$P_i = \\frac{N_i}{N_{\\text{total}}} \\times 100\\%$$
 
-        All telemetry events are aggregated in a verified **1:1** ratio without artificial extrapolations or scaling multipliers.
+        **Formula Explanation & Parameters:**
+        * **$N_{\\text{total}}$** — total volume of evaluated agent actions for the given month ($100\\%$ of the pie circle).
+        * **$P_i$** — calculated percentage share of each individual operational segment ($i$).
+        * **$N_{\\text{approved}}$ (🟢 Full Control):** actions requiring prior human confirmation (human-in-the-loop: merged PRs, authorized tool executions).
+        * **$N_{\\text{oversight}}$ (🟩 Revision):** autonomous agent actions submitted for human inspection and code review before release.
+        * **$N_{\\text{auto}}$ (🟡 Auto in bounds):** autonomous agent steps executed cleanly inside assigned tool scopes and container sandboxes.
+        * **$N_{\\text{out}}$ (🔴 Out of bounds):** verified container escapes, permission bypasses, or documented real-world systemic failures.
 
         ---
 
         ### 2. Operational Control Segments
-        * **🟢 Full Control (`approved`):** Actions requiring mandatory explicit human operator authorization prior to execution (merged Pull Requests, operator-approved sensitive CLI/tool calls).
-        * **🟩 Revision (`oversight`):** Actions executed autonomously by the model but queued for post-hoc human review, code audit, or verification.
-        * **🟡 Autonomous within bounds (`auto_in_bounds`):** Successful autonomous steps executed inside containerized limits and tool sandbox parameters without human intervention.
-        * **🔴 Out of bounds (`out_of_bounds`):** Verified sandbox escapes, policy violations, unauthorized network/system calls, and real-world incidents.
+        * **🟢 Full Control (`approved`):** Direct human authorization for every major action.
+        * **🟩 Revision (`oversight`):** Autonomous work completed by the model that remains subject to human code audits and post-hoc verification.
+        * **🟡 Autonomous within bounds (`auto_in_bounds`):** Routine autonomous operations contained entirely within allowed execution limits.
+        * **🔴 Out of bounds (`out_of_bounds`):** Incidents where systems overrode permissions, attempted sandbox escapes, or caused verified disruptions.
 
         ---
 
@@ -735,20 +742,28 @@ with st.expander(L["circle_method_expander"]):
         """)
     else:
         st.markdown("""
-        ### 1. Математична формула та баланс 100%
-        Кругова діаграма відображає пропорції дій автономних агентів у стандартизованих середовищах виконання:
+        ### 1. Математичний баланс та правило 100%
+        Кругова діаграма показує точний розподіл усіх зафіксованих дій ШІ-агентів у тестових середовищах та реєстрах аудиту у співвідношенні 1:1:
+
         $$N_{\\text{total}} = N_{\\text{approved}} + N_{\\text{oversight}} + N_{\\text{auto}} + N_{\\text{out}}$$
+
         $$P_i = \\frac{N_i}{N_{\\text{total}}} \\times 100\\%$$
 
-        Усі події збираються у безпосередньому співвідношенні **1:1** без застосування суб'єктивних коефіцієнтів масштабування.
+        **Пояснення змінних формули:**
+        * **$N_{\\text{total}}$** — загальна кількість зафіксованих дій агентів за звітний місяць, що становить повні $100\\%$ кругової діаграми.
+        * **$P_i$** — розрахована відсоткова частка відповідного сектора ($i$) на діаграмі.
+        * **$N_{\\text{approved}}$ (🟢 Full Control):** дії під прямим контролем людини (оператор особисто погодив виконання команди чи злив Pull Request).
+        * **$N_{\\text{oversight}}$ (🟩 Перегляд):** автономні дії моделі, передані людині на пост-фактум аудит, код-рев'ю та валідацію.
+        * **$N_{\\text{auto}}$ (🟡 Автономно в межах):** завдання, успішно закриті системою самостійно без виходу за дозволені рамки інструментів і пісочниці.
+        * **$N_{\\text{out}}$ (🔴 Поза межами):** верифіковані інциденти порушення рамок: спроби виходу з контейнера (sandbox escape), несанкціоновані системні виклики або зафіксовані збої.
 
         ---
 
         ### 2. Сегменти контролю дій
-        * **🟢 Full Control (`approved`):** Дії, що вимагали попереднього схвалення оператором перед виконанням (підтверджені та злиті PR, дозволені людиною системні виклики інструментів).
-        * **🟩 Перегляд (`oversight`):** Дії, виконані агентом автономно, але які підлягали подальшому нагляду (код-рев'ю, черга аудиту, незакриті перевірки).
-        * **🟡 Автономно в межах (`auto_in_bounds`):** Успішні автономні кроки системи без втручання оператора в дозволених межах пісочниці та наданих інструментів.
-        * **🔴 Поза межами (`out_of_bounds`):** Верифіковані інциденти порушення меж: спроби виходу з контейнера (sandbox escape), несанкціоновані запити або реальні зафіксовані збої.
+        * **🟢 Full Control (`approved`):** Обов'язкове попереднє людське погодження дій (Human-in-the-loop).
+        * **🟩 Перегляд (`oversight`):** Автономні дії з подальшим обов'язковим аудитом та контролем результатів.
+        * **🟡 Автономно в межах (`auto_in_bounds`):** Безпечна автономна робота агента у межах лімітів і дозволеного стеку.
+        * **🔴 Поза межами (`out_of_bounds`):** Вихід з-під контролю або спроби порушення обмежень безпеки.
 
         ---
 
