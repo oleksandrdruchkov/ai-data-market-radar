@@ -212,7 +212,7 @@ div[data-testid="stPlotlyChart"] {
 </style>
 """, unsafe_allow_html=True)
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", "https://npwqiyzmhjypfvrjssxi.supabase.co"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
 
 @st.cache_resource
@@ -272,8 +272,18 @@ def load_risk_data():
     except Exception:
         return pd.DataFrame(), pd.DataFrame()
 
+@st.cache_data(ttl=180)
+def load_circle_data():
+    try:
+        res = supabase.table("fct_action_circle_monthly").select("*").order("period", desc=True).execute()
+        df = pd.DataFrame(res.data)
+        return df if not df.empty else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
 df_skills_base, df_arxiv, df_health, df_b = load_data()
 df_prof, df_hor = load_risk_data()
+df_circ_raw = load_circle_data()
 
 col_head, col_lang, col_reg = st.columns([1.1, 0.55, 1.1])
 with col_head:
@@ -309,6 +319,7 @@ L = {
     "time_3_6": "~3–6 Months" if is_en else "~3–6 місяців",
     "time_6_9": "~6–9 Months" if is_en else "~6–9 місяців",
     "sai_title": "🤖 AI Systemic Threat & Capability Radar" if is_en else "🤖 Вектор Системних Ризиків ШІ",
+    "circle_title": "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ",
     "method_expander": "ℹ Empirical Methodology: CRI Tiers & Limits" if is_en else "ℹ️ Емпірична методологія: CRI Рівні та Ліміти",
     "compare_expander": "📊 Compare Frontier Models (Raw Benchmarks)" if is_en else "📊 Порівняння моделей ШІ (Сирі бенчмарки)"
 }
@@ -500,9 +511,6 @@ st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; mar
 if df_prof.empty:
     st.info("Data synchronization in progress. The Monte Carlo pipeline is updating risk vectors." if is_en else "Триває збір даних. Пайплайн Монте-Карло оновлює вектори ризику.")
 else:
-    # -------------------------------------------------------------
-    # РАНЖУВАННЯ МОДЕЛЕЙ ЗА СПАДАННЯМ РИЗИКУ (CRI Tier + Headroom)
-    # -------------------------------------------------------------
     ranking_records = []
     unique_model_names = df_prof['model_name'].unique()
     
@@ -512,7 +520,6 @@ else:
         
         m_max_tier = int(m_subset['assigned_tier'].max())
         
-        # Обчислення запасу (чим менше doublings, тим вища небезпека)
         m_doublings = 999.0
         if not m_hor_sub.empty:
             h_row = m_hor_sub.iloc[0]
@@ -611,79 +618,91 @@ else:
 # КОЛО КОНТРОЛЮ / АВТОНОМНОСТІ ДІЙ ШІ
 # ==========================================
 CIRCLE_SEGMENTS = {
-    "approved":       ("🟢 Контроль-контроль", "🟢 Approved before execution",  "#2e7d32"),
-    "oversight":      ("🟩 Нагляд",            "🟩 Oversight",                 "#81c784"),
-    "auto_in_bounds": ("🟡 Автономно в межах", "🟡 Autonomous within bounds",  "#fbc02d"),
-    "out_of_bounds":  ("🔴 Поза межами",       "🔴 Out of bounds",             "#c62828"),
+    "approved":       ("🟢 Контроль-контроль", "🟢 Approved before execution",  "#15803d"),
+    "oversight":      ("🟩 Нагляд",            "🟩 Oversight",                  "#86efac"),
+    "auto_in_bounds": ("🟡 Автономно в межах", "🟡 Autonomous within bounds",   "#f59e0b"),
+    "out_of_bounds":  ("🔴 Поза межами",       "🔴 Out of bounds",              "#dc2626"),
 }
 
-@st.cache_data(ttl=300)
-def load_circle_data():
-    try:
-        res = supabase.table("fct_action_circle_monthly").select("*").order("period").execute()
-        return pd.DataFrame(res.data)
-    except Exception:
-        return pd.DataFrame()
-
 st.markdown("<br>", unsafe_allow_html=True)
-circle_title = "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ"
-st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{circle_title}</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['circle_title']}</div>", unsafe_allow_html=True)
 
-df_circ = load_circle_data()
+df_circ = df_circ_raw.copy()
 circ_keys = list(CIRCLE_SEGMENTS.keys())
 
-if not df_circ.empty:
-    for k in circ_keys:
-        if k not in df_circ.columns:
-            df_circ[k] = 0
-        df_circ[k] = pd.to_numeric(df_circ[k], errors="coerce").fillna(0)
+is_demo = df_circ.empty
+if is_demo:
+    df_circ = pd.DataFrame([{
+        "period": "2026-10",
+        "approved": 25,
+        "oversight": 45,
+        "auto_in_bounds": 29,
+        "out_of_bounds": 1,
+    }])
+    st.caption("⚠️ " + ("Using simulation baseline (Syncing live audit logs...)" if is_en else "Використовуються базові метрики (Синхронізація логів аудиту...)"))
 
-circ_demo = df_circ.empty
-if circ_demo:
-    df_circ = pd.DataFrame({
-        "period": ["2026-10"],
-        "approved": [25], "oversight": [45], "auto_in_bounds": [29], "out_of_bounds": [1],
-    })
-    st.warning("DEMO data, not real measurements." if is_en else "ДЕМО-дані, не реальні вимірювання.")
+for k in circ_keys:
+    if k not in df_circ.columns:
+        df_circ[k] = 0
+    df_circ[k] = pd.to_numeric(df_circ[k], errors="coerce").fillna(0)
 
 circ_periods = sorted(df_circ["period"].astype(str).unique().tolist(), reverse=True)
-circ_period = st.selectbox("Period", circ_periods, label_visibility="collapsed")
-circ_row = df_circ[df_circ["period"].astype(str) == circ_period].iloc[0]
+selected_p = st.selectbox("Period", circ_periods, index=0, label_visibility="collapsed")
 
-lang_idx = 1 if is_en else 0
-circ_labels = [CIRCLE_SEGMENTS[k][lang_idx] for k in circ_keys]
-circ_values = [int(circ_row[k]) for k in circ_keys]
-circ_colors = {CIRCLE_SEGMENTS[k][lang_idx]: CIRCLE_SEGMENTS[k][2] for k in circ_keys}
-circ_total = sum(circ_values)
+matching_rows = df_circ[df_circ["period"].astype(str) == selected_p]
+if not matching_rows.empty:
+    circ_row = matching_rows.iloc[0]
+    lang_idx = 1 if is_en else 0
+    circ_labels = [CIRCLE_SEGMENTS[k][lang_idx] for k in circ_keys]
+    circ_values = [int(circ_row[k]) for k in circ_keys]
+    circ_colors = {CIRCLE_SEGMENTS[k][lang_idx]: CIRCLE_SEGMENTS[k][2] for k in circ_keys}
+    circ_total = sum(circ_values)
 
-if circ_total == 0:
-    st.caption("No data for this period." if is_en else "Немає даних за цей період.")
-else:
-    fig_circ = px.pie(
-        names=circ_labels, values=circ_values, hole=0.55,
-        color=circ_labels, color_discrete_map=circ_colors,
-    )
-    fig_circ.update_traces(textinfo="percent", sort=False)
-    fig_circ.update_layout(
-        height=320, paper_bgcolor="#ffffff",
-        margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation="h", y=-0.05),
-        font=dict(color="#0f172a", size=11),
-    )
-    st.plotly_chart(fig_circ, use_container_width=True, config={'displayModeBar': False})
-    red_share = circ_values[3] / circ_total * 100
-    st.caption(
-        (f"Out of bounds: {red_share:.1f}% (100% = 'Skynet'). Lower bound: only detected and confirmed events."
-         if is_en else
-         f"Поза межами: {red_share:.1f}% (100% = «Скайнет»). Нижня межа: лише виявлені й підтверджені події.")
-    )
+    if circ_total == 0:
+        st.caption("No data for this period." if is_en else "Немає даних за цей період.")
+    else:
+        fig_circ = px.pie(
+            names=circ_labels,
+            values=circ_values,
+            hole=0.60,
+            color=circ_labels,
+            color_discrete_map=circ_colors,
+        )
+        fig_circ.update_traces(
+            textinfo="percent+label",
+            textposition="outside",
+            sort=False,
+            showlegend=False
+        )
+        fig_circ.update_layout(
+            height=300,
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            margin=dict(l=20, r=20, t=20, b=20),
+            font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI"),
+            annotations=[dict(
+                text=f"<b>{circ_total:,}</b><br><span style='font-size:0.7rem;color:#64748b;'>{'Actions' if is_en else 'Дій'}</span>",
+                x=0.5, y=0.5, font_size=13, showarrow=False
+            )]
+        )
+        st.plotly_chart(fig_circ, use_container_width=True, config={'displayModeBar': False})
 
+        red_share = (circ_values[3] / circ_total) * 100 if circ_total > 0 else 0
+        st.caption(
+            (f"Out of bounds: **{red_share:.2f}%** (100% = 'Skynet'). Lower bound: only detected and confirmed events."
+             if is_en else
+             f"Поза межами: **{red_share:.2f}%** (100% = «Скайнет»). Нижня межа: лише виявлені й підтверджені події.")
+        )
+
+# ==========================================
+# МЕТОДОЛОГІЯ ТА СИРІ БЕНЧМАРКИ
+# ==========================================
 with st.expander(L["method_expander"]):
     if is_en:
         st.markdown("""
         **Empirical Methodology & Monte Carlo Risk Engine:**
         * **CRI (Catastrophic Risk Index) Tiers:** Evaluates models across structural pathways (Cyber, R&D, Replication). Levels range from CRI-1 (Tool) to CRI-4 (Systemic Autonomy).
-        * **Monte Carlo Simulations:** Employs bivariate log-normal modeling for correlated $T_{50}$ and $T_{80}$ evaluation horizons, coupled with Beta-distributed capability ($C$) scores (10,000 iterations). 
+        * **Monte Carlo Simulations:** Employs bivariate log-normal modeling for correlated $T_{50}$ and $T_{80}$ evaluation horizons, coupled with Beta-distributed capability ($C$) scores (10,000 iterations).
         * **Instrument Ceiling:** METR's active testing boundary is strictly censored at **16.0 hours**. Any model exceeding this limit is flagged as `SATURATED` and blocked from speculative CRI-4 classification.
         * **Headroom:** Forecasts time-to-next-tier based on limiting capability constraints, using 3.5 to 7.0 month historical capability doubling trends.
         """)
