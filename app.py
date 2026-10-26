@@ -340,7 +340,7 @@ if reg_lookup != "All Regions":
     target_reg = "EU" if reg_lookup == "Europe" else reg_lookup
     if "region" in filtered_skills.columns:
         filtered_skills = filtered_skills[filtered_skills["region"].isin([reg_lookup, target_reg])]
-    elif not filtered_skills.empty:
+    elif not filtered_skills.empty and "vacancy_count" in filtered_skills.columns:
         weights = {"US": 0.55, "Europe": 0.30, "APAC": 0.15}
         w = weights.get(reg_lookup, 1.0)
         filtered_skills["vacancy_count"] = (filtered_skills["vacancy_count"] * w).round().astype(int)
@@ -512,22 +512,22 @@ if df_prof.empty:
     st.info("Data synchronization in progress. The Monte Carlo pipeline is updating risk vectors." if is_en else "Триває збір даних. Пайплайн Монте-Карло оновлює вектори ризику.")
 else:
     ranking_records = []
-    unique_model_names = df_prof['model_name'].unique()
+    unique_model_names = df_prof['model_name'].dropna().unique()
     
     for m_name in unique_model_names:
         m_subset = df_prof[df_prof['model_name'] == m_name]
         m_hor_sub = df_hor[df_hor['model_name'] == m_name] if not df_hor.empty else pd.DataFrame()
         
-        m_max_tier = int(m_subset['assigned_tier'].max())
+        m_max_tier = int(m_subset['assigned_tier'].max()) if 'assigned_tier' in m_subset.columns else 1
         
         m_doublings = 999.0
-        if not m_hor_sub.empty:
+        if not m_hor_sub.empty and 't50_obs' in m_hor_sub.columns:
             h_row = m_hor_sub.iloc[0]
-            t50_val = float(h_row['t50_obs'])
+            t50_val = float(h_row['t50_obs']) if pd.notnull(h_row.get('t50_obs')) else 16.0
             t80_val = float(h_row['t80_obs']) if pd.notnull(h_row.get('t80_obs')) else None
             
             calc_h_t50 = max(0.0, np.log2(24.0 / max(t50_val, 16.0)))
-            calc_h_t80 = max(0.0, np.log2(8.0 / t80_val)) if t80_val else 0.0
+            calc_h_t80 = max(0.0, np.log2(8.0 / t80_val)) if t80_val and t80_val > 0 else 0.0
             m_doublings = max(calc_h_t50, calc_h_t80)
             
         ranking_records.append({
@@ -549,13 +549,13 @@ else:
         
         vector_elements = []
         for _, row in model_profs.iterrows():
-            tier = row['assigned_tier']
-            pathway = str(row['pathway']).upper()
+            tier = row.get('assigned_tier', 1)
+            pathway = str(row.get('pathway', 'UNKNOWN')).upper()
             vector_elements.append(f"<b>{pathway}</b>: CRI-{tier}")
         vector_str = " | ".join(vector_elements)
         
-        is_sat = model_profs['is_saturated'].any()
-        max_tier = int(model_profs['assigned_tier'].max())
+        is_sat = bool(model_profs['is_saturated'].any()) if 'is_saturated' in model_profs.columns else False
+        max_tier = int(model_profs['assigned_tier'].max()) if 'assigned_tier' in model_profs.columns else 1
         
         if is_sat:
             sat_status = "<span style='color:#dc2626;'>🔴 <b>SATURATED</b> (Autonomy ≥ 16h)</span>" if is_en else "<span style='color:#dc2626;'>🔴 <b>МЕЖА ПРИЛАДУ</b> (Автономність ≥ 16 год)</span>"
@@ -567,12 +567,12 @@ else:
             tier_color = "#4f46e5" if max_tier < 4 else "#dc2626"
             
         headroom_text = "N/A (Data Gap)"
-        if model_hor is not None:
-            t50 = float(model_hor['t50_obs'])
+        if model_hor is not None and 't50_obs' in model_hor:
+            t50 = float(model_hor['t50_obs']) if pd.notnull(model_hor.get('t50_obs')) else 16.0
             t80 = float(model_hor['t80_obs']) if pd.notnull(model_hor.get('t80_obs')) else None
             
             h_t50 = max(0.0, np.log2(24.0 / max(t50, 16.0)))
-            h_t80 = max(0.0, np.log2(8.0 / t80)) if t80 else 0.0
+            h_t80 = max(0.0, np.log2(8.0 / t80)) if t80 and t80 > 0 else 0.0
             
             limiting_factor = "T80 Reliability" if h_t80 > h_t50 else "T50 Autonomy"
             total_doublings = max(h_t50, h_t80)
@@ -661,7 +661,6 @@ if not matching_rows.empty:
     if circ_total == 0:
         st.caption("No data for this period." if is_en else "Немає даних за цей період.")
     else:
-        # hole=0 робить діаграму повністю суцільною до центру
         fig_circ = px.pie(
             names=circ_labels,
             values=circ_values,
@@ -686,11 +685,15 @@ if not matching_rows.empty:
 
         red_share = (circ_values[3] / circ_total) * 100 if circ_total > 0 else 0
         total_lbl = "Total actions" if is_en else "Всього дій"
-        st.caption(
-            (f"{total_lbl}: **{circ_total:,}** | Out of bounds: **{red_share:.2f}%** (100% = 'Skynet'). Lower bound: only detected and confirmed events."
-             if is_en else
-             f"{total_lbl}: **{circ_total:,}** | Поза межами: **{red_share:.2f}%** (100% = «Скайнет»). Нижня межа: лише виявлені й підтверджені події.")
-        )
+        
+        st.markdown(f"""
+        <div style="font-size: 0.76rem; color: #64748b; line-height: 1.4; margin-top: 4px; padding-left: 2px;">
+            <b>{total_lbl}:</b> {circ_total:,} &nbsp;|&nbsp; 
+            <b>{'Out of bounds' if is_en else 'Поза межами'}:</b> <span style="color:#dc2626; font-weight:700;">{red_share:.2f}%</span> 
+            <span style="color:#94a3b8;">({ '100% = Skynet' if is_en else '100% = «Скайнет»' })</span><br>
+            <span style="color:#94a3b8;">{ 'Lower bound: only verified incidents & container violations.' if is_en else 'Нижня межа: лише верифіковані інциденти та порушення ізоляції.' }</span>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ==========================================
 # МЕТОДОЛОГІЯ ТА СИРІ БЕНЧМАРКИ
