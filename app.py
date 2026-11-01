@@ -270,7 +270,6 @@ def load_circle_data():
         if df.empty:
             return pd.DataFrame()
 
-        # Якщо колонка source_type є, віддаємо пріоритет експертному аудиту над щоденною телеметрією
         if "source_type" in df.columns:
             df["priority"] = df["source_type"].apply(
                 lambda x: 2 if str(x).strip() == "Frontier System Card Audit" else 1
@@ -667,8 +666,18 @@ if not matching_rows.empty:
     circ_colors = {CIRCLE_SEGMENTS[k][lang_idx]: CIRCLE_SEGMENTS[k][2] for k in circ_keys}
     circ_total = sum(circ_values)
 
-    source_type_val = str(circ_row.get("source_type", "live_telemetry"))
-    source_ref_val = str(circ_row.get("source_reference", "AI Incident Database & Inspect Evals"))
+    # Чистка значень від NaN
+    source_type_val = circ_row.get("source_type")
+    if pd.isna(source_type_val) or not str(source_type_val).strip() or str(source_type_val) == "nan":
+        source_type_val = "live_telemetry"
+    else:
+        source_type_val = str(source_type_val).strip()
+
+    source_ref_val = circ_row.get("source_reference")
+    if pd.isna(source_ref_val) or not str(source_ref_val).strip() or str(source_ref_val) == "nan":
+        source_ref_val = "AI Incident Database & Inspect Evals"
+    else:
+        source_ref_val = str(source_ref_val).strip()
 
     if circ_total == 0:
         st.caption("No data for this period." if is_en else "Немає даних за цей період.")
@@ -697,30 +706,31 @@ if not matching_rows.empty:
 
         red_share = (circ_values[3] / circ_total) * 100 if circ_total > 0 else 0
         total_lbl = "Total actions" if is_en else "Всього дій"
-        
-        # Динамічний статус джерела під круговою діаграмою
-        if source_type_val == "Frontier System Card Audit":
-            source_badge = f"""
-            <div style="font-size:0.75rem; color:#0284c7; font-weight:700; margin-top:5px; margin-bottom:2px;">
-                🛡️ {'Verified Benchmark:' if is_en else 'Верифіковано:'} Frontier System Card Audit <span style="font-weight:500; color:#475569;">({source_ref_val})</span>
-            </div>
-            """
-        else:
-            source_badge = f"""
-            <div style="font-size:0.75rem; color:#16a34a; font-weight:700; margin-top:5px; margin-bottom:2px;">
-                ● {'Telemetry stream:' if is_en else 'Потік телеметрії:'} {source_ref_val}
-            </div>
-            """
+        skynet_lbl = "100% = Skynet" if is_en else "100% = «Скайнет»"
+        oob_lbl = "Out of bounds" if is_en else "Поза межами"
+        lower_bound_txt = (
+            "Lower bound: only verified incidents & container violations."
+            if is_en
+            else "Нижня межа: лише верифіковані інциденти та порушення ізоляції."
+        )
 
-        st.markdown(f"""
-        <div style="font-size: 0.76rem; color: #64748b; line-height: 1.4; margin-top: 4px; padding-left: 2px;">
-            <b>{total_lbl}:</b> {circ_total:,} &nbsp;|&nbsp; 
-            <b>{'Out of bounds' if is_en else 'Поза межами'}:</b> <span style="color:#dc2626; font-weight:700;">{red_share:.2f}%</span> 
-            <span style="color:#94a3b8;">({ '100% = Skynet' if is_en else '100% = «Скайнет»' })</span><br>
-            {source_badge}
-            <span style="color:#94a3b8;">{ 'Lower bound: only verified incidents & container violations.' if is_en else 'Нижня межа: лише верифіковані інциденти та порушення ізоляції.' }</span>
-        </div>
-        """, unsafe_allow_html=True)
+        if source_type_val == "Frontier System Card Audit":
+            badge_title = "🛡️ Verified Benchmark:" if is_en else "🛡️ Верифіковано:"
+            badge_line = f"<span style='color:#0284c7; font-weight:700;'>{badge_title} Frontier System Card Audit</span> <span style='color:#475569;'>({source_ref_val})</span>"
+        else:
+            badge_title = "● Telemetry stream:" if is_en else "● Потік телеметрії:"
+            badge_line = f"<span style='color:#16a34a; font-weight:700;'>{badge_title}</span> <span style='color:#475569;'>{source_ref_val}</span>"
+
+        info_html = (
+            f"<div style='font-size:0.76rem; color:#64748b; line-height:1.5; margin-top:4px; padding-left:2px;'>"
+            f"<b>{total_lbl}:</b> {circ_total:,} &nbsp;|&nbsp; "
+            f"<b>{oob_lbl}:</b> <span style='color:#dc2626; font-weight:700;'>{red_share:.2f}%</span> "
+            f"<span style='color:#94a3b8;'>({skynet_lbl})</span><br>"
+            f"<div style='margin-top:2px; margin-bottom:2px;'>{badge_line}</div>"
+            f"<span style='color:#94a3b8;'>{lower_bound_txt}</span>"
+            f"</div>"
+        )
+        st.markdown(info_html, unsafe_allow_html=True)
 
 # ==========================================
 # МЕТОДОЛОГІЯ: ЕМПІРИЧНИЙ РАДАР ТА ACTION CIRCLE
