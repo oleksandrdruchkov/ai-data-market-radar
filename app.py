@@ -259,12 +259,29 @@ def load_risk_data():
     except Exception:
         return pd.DataFrame(), pd.DataFrame()
 
-@st.cache_data(ttl=180)
+@st.cache_data(ttl=120)
 def load_circle_data():
     try:
-        res = supabase.table("fct_action_circle_monthly").select("*").order("period", desc=True).execute()
+        res = supabase.table("fct_action_circle_monthly")\
+            .select("*")\
+            .order("period", desc=True)\
+            .execute()
         df = pd.DataFrame(res.data)
-        return df if not df.empty else pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
+
+        # Якщо колонка source_type є, віддаємо пріоритет експертному аудиту над щоденною телеметрією
+        if "source_type" in df.columns:
+            df["priority"] = df["source_type"].apply(
+                lambda x: 2 if str(x).strip() == "Frontier System Card Audit" else 1
+            )
+            df = df.sort_values(by=["period", "priority"], ascending=[False, False])
+            df = df.drop_duplicates(subset=["period"], keep="first").reset_index(drop=True)
+        else:
+            df["source_type"] = "live_telemetry"
+            df["source_reference"] = "AI Incident Database & Inspect Evals"
+
+        return df
     except Exception:
         return pd.DataFrame()
 
@@ -326,7 +343,6 @@ with col_reg:
 reg_lookup = "All Regions" if selected_region in ["All Regions", "Всі регіони"] else selected_region
 filtered_skills = df_skills_base.copy()
 
-# Логіка фільтрації навичок та вакансій за обраним макрорегіоном
 if reg_lookup != "All Regions":
     target_reg = "EU" if reg_lookup == "Europe" else reg_lookup
     if "region" in filtered_skills.columns:
@@ -612,7 +628,7 @@ CIRCLE_SEGMENTS = {
     "approved":       ("🟢 Full Control",        "🟢 Full Control",              "#15803d"),
     "oversight":      ("🟩 Перегляд",             "🟩 Revision",                  "#86efac"),
     "auto_in_bounds": ("🟡 Автономно в межах",   "🟡 Autonomous within bounds",  "#f59e0b"),
-    "out_of_bounds":  ("🔴 Поза межами",         "🔴 Out of bounds",             "#dc2626"),
+    "out_of_bounds":  ("🔴 Поза межами",          "🔴 Out of bounds",              "#dc2626"),
 }
 
 st.markdown("<br>", unsafe_allow_html=True)
@@ -629,6 +645,8 @@ if is_demo:
         "oversight": 45,
         "auto_in_bounds": 29,
         "out_of_bounds": 1,
+        "source_type": "live_telemetry",
+        "source_reference": "Baseline Simulator"
     }])
     st.caption("⚠️ " + ("Using simulation baseline (Syncing live audit logs...)" if is_en else "Використовуються базові метрики (Синхронізація логів аудиту...)"))
 
@@ -648,6 +666,9 @@ if not matching_rows.empty:
     circ_values = [int(circ_row[k]) for k in circ_keys]
     circ_colors = {CIRCLE_SEGMENTS[k][lang_idx]: CIRCLE_SEGMENTS[k][2] for k in circ_keys}
     circ_total = sum(circ_values)
+
+    source_type_val = str(circ_row.get("source_type", "live_telemetry"))
+    source_ref_val = str(circ_row.get("source_reference", "AI Incident Database & Inspect Evals"))
 
     if circ_total == 0:
         st.caption("No data for this period." if is_en else "Немає даних за цей період.")
@@ -677,11 +698,26 @@ if not matching_rows.empty:
         red_share = (circ_values[3] / circ_total) * 100 if circ_total > 0 else 0
         total_lbl = "Total actions" if is_en else "Всього дій"
         
+        # Динамічний статус джерела під круговою діаграмою
+        if source_type_val == "Frontier System Card Audit":
+            source_badge = f"""
+            <div style="font-size:0.75rem; color:#0284c7; font-weight:700; margin-top:5px; margin-bottom:2px;">
+                🛡️ {'Verified Benchmark:' if is_en else 'Верифіковано:'} Frontier System Card Audit <span style="font-weight:500; color:#475569;">({source_ref_val})</span>
+            </div>
+            """
+        else:
+            source_badge = f"""
+            <div style="font-size:0.75rem; color:#16a34a; font-weight:700; margin-top:5px; margin-bottom:2px;">
+                ● {'Telemetry stream:' if is_en else 'Потік телеметрії:'} {source_ref_val}
+            </div>
+            """
+
         st.markdown(f"""
         <div style="font-size: 0.76rem; color: #64748b; line-height: 1.4; margin-top: 4px; padding-left: 2px;">
             <b>{total_lbl}:</b> {circ_total:,} &nbsp;|&nbsp; 
             <b>{'Out of bounds' if is_en else 'Поза межами'}:</b> <span style="color:#dc2626; font-weight:700;">{red_share:.2f}%</span> 
             <span style="color:#94a3b8;">({ '100% = Skynet' if is_en else '100% = «Скайнет»' })</span><br>
+            {source_badge}
             <span style="color:#94a3b8;">{ 'Lower bound: only verified incidents & container violations.' if is_en else 'Нижня межа: лише верифіковані інциденти та порушення ізоляції.' }</span>
         </div>
         """, unsafe_allow_html=True)
@@ -695,7 +731,7 @@ with st.expander(L["method_expander"]):
         **Empirical Methodology & Monte Carlo Risk Engine:**
         * **CRI (Catastrophic Risk Index) Tiers:** Evaluates models across structural pathways (Cyber, R&D, Replication). Levels range from CRI-1 (Tool) to CRI-4 (Systemic Autonomy).
         * **Monte Carlo Simulations:** Employs bivariate log-normal modeling for correlated $T_{50}$ and $T_{80}$ evaluation horizons, coupled with Beta-distributed capability ($C$) scores (10,000 iterations).
-        * **Instrument Ceiling:** METR's active testing boundary is strictly censored at **16.0 hours**. Any model exceeding this limit is flagged as `SATURATED` and blocked from speculative CRI-4 classification.
+        * **Instrument Ceiling:** Active autonomous agent horizon benchmarks are strictly evaluated up to **16.0 hours**. Any model exceeding this threshold is flagged as `SATURATED` and blocked from speculative CRI-4 classification.
         * **Headroom:** Forecasts time-to-next-tier based on limiting capability constraints, using 3.5 to 7.0 month historical capability doubling trends.
         """)
     else:
@@ -703,7 +739,7 @@ with st.expander(L["method_expander"]):
         **Емпірична методологія та Монте-Карло пайплайн:**
         * **Рівні CRI (Catastrophic Risk Index):** Оцінка моделей за структурними шляхами (Cyber, R&D, Replication). Рівні варіюються від CRI-1 (Інструмент) до CRI-4 (Системна автономність).
         * **Монте-Карло симуляція:** Використовує двовимірне логнормальне моделювання для корельованих горизонтів $T_{50}$ та $T_{80}$, а також бета-розподіл для показників спроможності $C$ (10 000 ітерацій).
-        * **Стеля вимірювань:** Активна межа тестування METR суворо цензурується на рівні **16.0 годин**. Моделі, що перевищують цю межу, отримують статус `SATURATED`, що блокує спекулятивне призначення рівня CRI-4.
+        * **Стеля вимірювань:** Активна межа тестування автономності моделей суворо цензурується на рівні **16.0 годин**. Моделі, що перевищують цю межу, отримують статус `SATURATED`, що блокує спекулятивне призначення рівня CRI-4.
         * **Запас (Headroom):** Прогнозує час до перетину наступного порогу на основі лімітуючих факторів, використовуючи історичний тренд подвоєння спроможностей (від 3.5 до 7.0 місяців).
         """)
 
@@ -735,7 +771,8 @@ with st.expander(L["circle_method_expander"]):
 
         ---
 
-        ### 3. Primary Data Registries
+        ### 3. Primary Data Registries & Verification
+        * **Frontier System Cards & Framework Audits:** Evaluated releases (Anthropic RSP ASL-3, OpenAI Preparedness, DeepMind FSF) take top priority when published, providing ground-truth verification of red-teaming anomalies and jailbreak bounds.
         * **AI Incident Database (`incidentdatabase.ai`):** Public GraphQL API capturing verified real-world systemic failures and boundary violations.
         * **SWE-bench Verified (`swe-bench/SWE-bench`):** Standard repository telemetry tracking pull request oversight and post-execution engineering audits.
         * **UK AISI Inspect Platform (`UKGovernmentBEIS/inspect_ai`):** Linux/Docker execution logs documenting tool approvals and sandbox-isolated autonomous steps.
@@ -767,7 +804,8 @@ with st.expander(L["circle_method_expander"]):
 
         ---
 
-        ### 3. Первинні відкриті джерела телеметрії
+        ### 3. Первинні джерела та верифікація зрізів
+        * **Frontier System Cards & Framework Audits:** Офіційні звіти лабораторій (Anthropic RSP, OpenAI Preparedness, DeepMind FSF), що мають найвищий пріоритет під час релізів нових моделей та слугують базою калібрування червоного сектора.
         * **AI Incident Database (`incidentdatabase.ai`):** Відкритий GraphQL API для фіксації підтверджених інцидентів порушення рамок безпеки.
         * **SWE-bench Verified (`swe-bench/SWE-bench`):** Журнали виконання інженерних завдань і статусів аудиту Pull Requests.
         * **UK AISI Inspect Platform (`UKGovernmentBEIS/inspect_ai`):** Логи виконання інструментальних викликів у захищених контейнерах Linux/Docker.
