@@ -1,10 +1,10 @@
 import os
 import json
-from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from supabase import create_client, Client
 
 st.set_page_config(
@@ -162,47 +162,6 @@ header[data-testid="stHeader"] {
     line-height: 1.35;
 }
 
-.sai-card {
-    background: #ffffff;
-    border: 1px solid #cbd5e1;
-    border-radius: 10px;
-    padding: 12px 14px;
-    margin-top: 10px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-}
-
-.sai-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
-    border-bottom: 1px solid #f1f5f9;
-    padding-bottom: 6px;
-}
-
-.sai-title {
-    font-size: 0.95rem;
-    font-weight: 800;
-    color: #0f172a;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-}
-
-.sai-score {
-    font-size: 1.05rem;
-    font-weight: 800;
-    color: #4f46e5;
-}
-
-.sai-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 0.8rem;
-    color: #475569;
-}
-
 div[data-testid="stPlotlyChart"] {
     background: #ffffff !important;
     border-radius: 10px !important;
@@ -247,17 +206,13 @@ def load_data():
     return df_s, df_ar, df_h
 
 @st.cache_data(ttl=60)
-def load_risk_data():
+def load_horizon_data():
+    """Виміри горизонту автономності моделей з усіх джерел (METR, UK AISI, Redwood ...)."""
     try:
-        prof_res = supabase.table("fct_risk_profiles").select("*").execute()
-        df_prof = pd.DataFrame(prof_res.data)
-        
-        hor_res = supabase.table("fct_metr_horizons").select("*").eq("is_synthetic", False).execute()
-        df_hor = pd.DataFrame(hor_res.data)
-        
-        return df_prof, df_hor
+        res = supabase.table("fct_autonomy_horizons").select("*").eq("is_synthetic", False).execute()
+        return pd.DataFrame(res.data)
     except Exception:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
 @st.cache_data(ttl=120)
 def load_circle_data():
@@ -285,7 +240,7 @@ def load_circle_data():
         return pd.DataFrame()
 
 df_skills_base, df_arxiv, df_health = load_data()
-df_prof, df_hor = load_risk_data()
+df_hor = load_horizon_data()
 df_circ_raw = load_circle_data()
 
 # ==========================================
@@ -324,9 +279,9 @@ L = {
     "time_1_3": "~1–3 Months" if is_en else "~1–3 місяці",
     "time_3_6": "~3–6 Months" if is_en else "~3–6 місяців",
     "time_6_9": "~6–9 Months" if is_en else "~6–9 місяців",
-    "sai_title": "🤖 AI Systemic Threat & Capability Radar" if is_en else "🤖 Вектор Системних Ризиків ШІ",
+    "horizon_title": "🤖 Autonomy Horizon of Frontier Models" if is_en else "🤖 Горизонт автономності топ-моделей",
     "circle_title": "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ",
-    "method_expander": "ℹ Empirical Methodology: CRI Tiers & Limits" if is_en else "ℹ️ Емпірична методологія: CRI Рівні та Ліміти",
+    "method_expander": "ℹ️ Methodology: Autonomy Horizon Chart" if is_en else "ℹ️ Методологія: графік горизонту автономності",
     "circle_method_expander": "📐 Methodology: Control vs Autonomy Action Circle" if is_en else "📐 Методологія розрахунку: Контроль та автономність дій ШІ"
 }
 
@@ -460,7 +415,7 @@ else:
         total_items = len(df_arxiv)
         for idx, row in df_arxiv.iterrows():
             readiness_pct = int(min(92, max(38, 85 - (idx * (45 // max(1, total_items - 1))))))
-            
+
             if readiness_pct >= 75:
                 stage_label = L["stage_high"]
                 time_est = L["time_1_3"]
@@ -509,116 +464,156 @@ else:
         st.caption(L["empty_arxiv"])
 
 # ==========================================
-# ВЕКТОРНИЙ РАДАР (AI THREAT PROFILES)
+# ЧАСОВИЙ ГРАФІК: ГОРИЗОНТ АВТОНОМНОСТІ МОДЕЛІ-ЛІДЕРА
 # ==========================================
+INSTRUMENT_CEILING_H = 16.0   # стеля METR T50
+REQUIRED_COLS = {"source", "metric", "model_name", "release_date", "value_hours"}
+
+# series_id = "<source>|<metric>" -> (підпис EN, підпис UA, колір)
+SERIES_META = {
+    "METR|T50":                 ("METR T50 (software, 50%)",      "METR T50 (ПЗ-завдання, 50%)", "#4f46e5"),
+    "METR|T80":                 ("METR T80 (80%)",                "METR T80 (80%)",              "#0284c7"),
+    "UK_AISI_CYBER|T80":        ("UK AISI cyber T80",             "UK AISI кібер T80",           "#dc2626"),
+    "REDWOOD_NOCOT|NOCOT_T50":  ("Redwood no-CoT T50 (auxiliary)", "Redwood no-CoT T50 (допоміжна)", "#64748b"),
+}
+DEFAULT_SERIES = ["METR|T50", "UK_AISI_CYBER|T80"]
+
+def series_label(sid):
+    meta = SERIES_META.get(sid)
+    if meta:
+        return meta[0] if is_en else meta[1]
+    return sid.replace("|", " ")
+
+def series_color(sid):
+    meta = SERIES_META.get(sid)
+    return meta[2] if meta else "#0f766e"
+
 st.markdown("<br>", unsafe_allow_html=True)
-st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['sai_title']}</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['horizon_title']}</div>", unsafe_allow_html=True)
 
-if df_prof.empty:
-    st.info("Data synchronization in progress. The Monte Carlo pipeline is updating risk vectors." if is_en else "Триває збір даних. Пайплайн Монте-Карло оновлює вектори ризику.")
+if df_hor.empty or not REQUIRED_COLS.issubset(df_hor.columns):
+    st.info("Data synchronization in progress." if is_en else "Триває збір даних горизонтів.")
 else:
-    ranking_records = []
-    unique_model_names = df_prof['model_name'].dropna().unique()
-    
-    for m_name in unique_model_names:
-        m_subset = df_prof[df_prof['model_name'] == m_name]
-        m_hor_sub = df_hor[df_hor['model_name'] == m_name] if not df_hor.empty else pd.DataFrame()
-        
-        m_max_tier = int(m_subset['assigned_tier'].max()) if 'assigned_tier' in m_subset.columns else 1
-        
-        m_doublings = 999.0
-        if not m_hor_sub.empty and 't50_obs' in m_hor_sub.columns:
-            h_row = m_hor_sub.iloc[0]
-            t50_val = float(h_row['t50_obs']) if pd.notnull(h_row.get('t50_obs')) else 16.0
-            t80_val = float(h_row['t80_obs']) if pd.notnull(h_row.get('t80_obs')) else None
-            
-            calc_h_t50 = max(0.0, np.log2(24.0 / max(t50_val, 16.0)))
-            calc_h_t80 = max(0.0, np.log2(8.0 / t80_val)) if t80_val and t80_val > 0 else 0.0
-            m_doublings = max(calc_h_t50, calc_h_t80)
-            
-        ranking_records.append({
-            "model_name": m_name,
-            "max_tier": m_max_tier,
-            "doublings": m_doublings
-        })
-        
-    df_sorted_ranking = pd.DataFrame(ranking_records).sort_values(
-        by=["max_tier", "doublings"],
-        ascending=[False, True]
+    d = df_hor.copy()
+    d["release_date"] = pd.to_datetime(d["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
+    d["value_hours"] = pd.to_numeric(d["value_hours"], errors="coerce")
+    d = d.dropna(subset=["release_date", "value_hours", "model_name"])
+    d = d[d["value_hours"] > 0]
+    d["series_id"] = d["source"].astype(str) + "|" + d["metric"].astype(str)
+
+    available = sorted(d["series_id"].unique().tolist(), key=lambda s: (s not in SERIES_META, list(SERIES_META).index(s) if s in SERIES_META else 0, s))
+    defaults = [s for s in DEFAULT_SERIES if s in available] or available[:1]
+
+    selected_series = st.multiselect(
+        "Series" if is_en else "Ряди даних",
+        options=available,
+        default=defaults,
+        format_func=series_label,
+        label_visibility="collapsed"
     )
-    sorted_models = df_sorted_ranking['model_name'].tolist()
 
-    for model in sorted_models:
-        model_profs = df_prof[df_prof['model_name'] == model]
-        model_hor_rows = df_hor[df_hor['model_name'] == model] if not df_hor.empty else pd.DataFrame()
-        model_hor = model_hor_rows.iloc[0] if not model_hor_rows.empty else None
-        
-        vector_elements = []
-        for _, row in model_profs.iterrows():
-            tier = row.get('assigned_tier', 1)
-            pathway = str(row.get('pathway', 'UNKNOWN')).upper()
-            vector_elements.append(f"<b>{pathway}</b>: CRI-{tier}")
-        vector_str = " | ".join(vector_elements)
-        
-        is_sat = bool(model_profs['is_saturated'].any()) if 'is_saturated' in model_profs.columns else False
-        max_tier = int(model_profs['assigned_tier'].max()) if 'assigned_tier' in model_profs.columns else 1
-        
-        if is_sat:
-            sat_status = "<span style='color:#dc2626;'>🔴 <b>SATURATED</b> (Autonomy ≥ 16h)</span>" if is_en else "<span style='color:#dc2626;'>🔴 <b>МЕЖА ПРИЛАДУ</b> (Автономність ≥ 16 год)</span>"
-            tier_display = f"CRI-{max_tier} <span style='font-size:0.75rem; color:#64748b; font-weight:600;'>[SATURATED]</span>"
-            tier_color = "#dc2626"
-        else:
-            sat_status = "<span style='color:#10b981;'>🟢 <b>VALIDATED DOMAIN</b> (Within limits)</span>" if is_en else "<span style='color:#10b981;'>🟢 <b>ВАЛІДОВАНА ЗОНА</b> (В межах приладу)</span>"
-            tier_display = f"CRI-{max_tier}"
-            tier_color = "#4f46e5" if max_tier < 4 else "#dc2626"
-            
-        headroom_text = "N/A (Data Gap)"
-        if model_hor is not None and 't50_obs' in model_hor:
-            t50 = float(model_hor['t50_obs']) if pd.notnull(model_hor.get('t50_obs')) else 16.0
-            t80 = float(model_hor['t80_obs']) if pd.notnull(model_hor.get('t80_obs')) else None
-            
-            h_t50 = max(0.0, np.log2(24.0 / max(t50, 16.0)))
-            h_t80 = max(0.0, np.log2(8.0 / t80)) if t80 and t80 > 0 else 0.0
-            
-            limiting_factor = "T80 Reliability" if h_t80 > h_t50 else "T50 Autonomy"
-            total_doublings = max(h_t50, h_t80)
-            
-            if total_doublings > 0:
-                months_min = round(total_doublings * 3.5, 1)
-                months_max = round(total_doublings * 7.0, 1)
-                headroom_text = f"<b>{total_doublings:.2f} doublings</b> (~{months_min}–{months_max} months) <br><span style='color:#64748b;'>Limit factor: {limiting_factor}</span>" if is_en else f"<b>{total_doublings:.2f} подвоєнь</b> (~{months_min}–{months_max} міс.) <br><span style='color:#64748b;'>Ліміт. фактор: {limiting_factor}</span>"
-            else:
-                headroom_text = "⚠️ <b>Threshold crossed or imminent</b>" if is_en else "⚠️ <b>Поріг перетнуто або неминучий</b>"
+    if not selected_series:
+        st.caption("Select at least one series." if is_en else "Оберіть хоча б один ряд.")
+    else:
+        fig_tl = go.Figure()
+        notes = []
 
-        lbl_headroom = "Headroom to CRI-4:" if is_en else "Запас до CRI-4:"
-        lbl_vector = "Pathway Vector:" if is_en else "Вектор шляхів:"
-        lbl_metric = "Metric Status:" if is_en else "Статус горизонту:"
+        for sid in selected_series:
+            sub = d[d["series_id"] == sid].sort_values("release_date")
+            # одна точка на модель (найсвіжіший замір)
+            sub = sub.drop_duplicates(subset=["model_name"], keep="last").sort_values("release_date").reset_index(drop=True)
+            if sub.empty:
+                continue
 
-        st.markdown(f"""
-        <div class="sai-card">
-          <div class="sai-header">
-            <div class="sai-title">{model}</div>
-            <div class="sai-score" style="color:{tier_color};">{tier_display}</div>
-          </div>
-          <div style="display:flex; flex-wrap:wrap; gap:15px; margin-bottom:8px;">
-            <div style="flex:1; min-width:180px;">
-              <div class="sai-meta">
-                <span>{lbl_vector}</span>
-                <span style="color:#0f172a;">[{vector_str}]</span>
-              </div>
-            </div>
-            <div style="flex:1; min-width:180px;">
-              <div class="sai-meta">
-                <span>{lbl_headroom}</span>
-                <span style="color:#0f172a;">{headroom_text}</span>
-              </div>
-            </div>
-          </div>
-          <div class="sai-meta" style="border-top:1px dashed #e2e8f0; padding-top:6px; flex-direction:row; align-items:center; gap:5px;">
-             <span>{lbl_metric}</span> {sat_status}
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+            color = series_color(sid)
+            name = series_label(sid)
+            sub["frontier"] = sub["value_hours"].cummax()
+            sub["is_record"] = sub["value_hours"] >= sub["frontier"]
+            recs = sub[sub["is_record"]]
+            others = sub[~sub["is_record"]]
+
+            # решта моделей - напівпрозорі точки
+            if not others.empty:
+                fig_tl.add_trace(go.Scatter(
+                    x=others["release_date"], y=others["value_hours"],
+                    mode="markers",
+                    marker=dict(size=6, color=color, opacity=0.3),
+                    text=others["model_name"],
+                    hovertemplate="%{text}<br>%{y:.2f} h<extra>" + name + "</extra>",
+                    showlegend=False
+                ))
+
+            # лінія лідера (ступінчаста) для легенди
+            fig_tl.add_trace(go.Scatter(
+                x=sub["release_date"], y=sub["frontier"],
+                mode="lines",
+                line=dict(color=color, width=2, shape="hv"),
+                name=name,
+                hoverinfo="skip"
+            ))
+
+            # рекордсмени з підписами
+            fig_tl.add_trace(go.Scatter(
+                x=recs["release_date"], y=recs["value_hours"],
+                mode="markers+text",
+                marker=dict(size=9, color=color),
+                text=recs["model_name"],
+                textposition="top left",
+                textfont=dict(size=9, color="#0f172a"),
+                hovertemplate="%{text}<br>%{y:.2f} h<extra>" + name + "</extra>",
+                showlegend=False
+            ))
+
+            # підпис: останній вимір + час подвоєння лідера
+            line = f"**{name}:** " + (
+                f"last measurement {sub['release_date'].max():%Y-%m-%d}" if is_en
+                else f"останній вимір {sub['release_date'].max():%Y-%m-%d}"
+            )
+            if len(recs) >= 2:
+                span_days = (recs["release_date"].iloc[-1] - recs["release_date"].iloc[0]).days
+                growth = recs["value_hours"].iloc[-1] / recs["value_hours"].iloc[0]
+                if span_days > 0 and growth > 1:
+                    dbl_months = span_days / 30.4 / np.log2(growth)
+                    line += (f", leader doubling ~{dbl_months:.1f} mo." if is_en
+                             else f", подвоєння лідера ~{dbl_months:.1f} міс.")
+            notes.append(line)
+
+        if "METR|T50" in selected_series:
+            fig_tl.add_hline(
+                y=INSTRUMENT_CEILING_H,
+                line_dash="dash",
+                line_color="#dc2626",
+                annotation_text="METR ceiling 16h" if is_en else "Стеля METR 16 год",
+                annotation_position="top left",
+                annotation_font_size=9,
+                annotation_font_color="#dc2626"
+            )
+
+        fig_tl.update_layout(
+            height=340,
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            margin=dict(l=10, r=10, t=10, b=10),
+            font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+            xaxis=dict(showgrid=False),
+            yaxis=dict(
+                type="log",
+                showgrid=True,
+                gridcolor="#f1f5f9",
+                title="Horizon, hours" if is_en else "Горизонт, год"
+            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
+            showlegend=True
+        )
+        st.plotly_chart(fig_tl, use_container_width=True, config={'displayModeBar': False})
+
+        for n in notes:
+            st.caption(n)
+        st.caption(
+            "Series come from different benchmarks and are not directly comparable."
+            if is_en else
+            "Ряди походять з різних бенчмарків і не є прямо порівнюваними."
+        )
 
 # ==========================================
 # КОЛО КОНТРОЛЮ / АВТОНОМНОСТІ ДІЙ ШІ
@@ -733,24 +728,26 @@ if not matching_rows.empty:
         st.markdown(info_html, unsafe_allow_html=True)
 
 # ==========================================
-# МЕТОДОЛОГІЯ: ЕМПІРИЧНИЙ РАДАР ТА ACTION CIRCLE
+# МЕТОДОЛОГІЯ: ГОРИЗОНТ АВТОНОМНОСТІ ТА ACTION CIRCLE
 # ==========================================
 with st.expander(L["method_expander"]):
     if is_en:
-        st.markdown("""
-        **Empirical Methodology & Monte Carlo Risk Engine:**
-        * **CRI (Catastrophic Risk Index) Tiers:** Evaluates models across structural pathways (Cyber, R&D, Replication). Levels range from CRI-1 (Tool) to CRI-4 (Systemic Autonomy).
-        * **Monte Carlo Simulations:** Employs bivariate log-normal modeling for correlated $T_{50}$ and $T_{80}$ evaluation horizons, coupled with Beta-distributed capability ($C$) scores (10,000 iterations).
-        * **Instrument Ceiling:** Active autonomous agent horizon benchmarks are strictly evaluated up to **16.0 hours**. Any model exceeding this threshold is flagged as `SATURATED` and blocked from speculative CRI-4 classification.
-        * **Headroom:** Forecasts time-to-next-tier based on limiting capability constraints, using 3.5 to 7.0 month historical capability doubling trends.
+        st.markdown(f"""
+        **Autonomy Horizon of the Leading Model:**
+        * **Horizon:** the length of a task (in hours of human expert work) that a model completes with a given reliability: 50% ($T_{{50}}$) or 80% ($T_{{80}}$). It is the main measure of model autonomy.
+        * **Leader line:** the running maximum of the horizon over release dates. Labeled points are the models that set a new record; faint points are other measured models.
+        * **Sources (kept separate):** METR (software and research-engineering tasks), UK AISI (cyber tasks) and, as an auxiliary signal, Redwood Research (no chain-of-thought reasoning). Different benchmarks and reliability levels are never merged into one curve.
+        * **Log scale:** the vertical axis is logarithmic, so steady exponential growth appears as a straight line. The doubling time is computed between the first and the latest record of each series.
+        * **Instrument ceiling:** METR $T_{{50}}$ is reliable only up to about **{INSTRUMENT_CEILING_H:.0f} hours**; above it values are censored and the real horizon may be longer. METR data is no longer updated, so that series ends at its last measurement.
         """)
     else:
-        st.markdown("""
-        **Емпірична методологія та Монте-Карло пайплайн:**
-        * **Рівні CRI (Catastrophic Risk Index):** Оцінка моделей за структурними шляхами (Cyber, R&D, Replication). Рівні варіюються від CRI-1 (Інструмент) до CRI-4 (Системна автономність).
-        * **Монте-Карло симуляція:** Використовує двовимірне логнормальне моделювання для корельованих горизонтів $T_{50}$ та $T_{80}$, а також бета-розподіл для показників спроможності $C$ (10 000 ітерацій).
-        * **Стеля вимірювань:** Активна межа тестування автономності моделей суворо цензурується на рівні **16.0 годин**. Моделі, що перевищують цю межу, отримують статус `SATURATED`, що блокує спекулятивне призначення рівня CRI-4.
-        * **Запас (Headroom):** Прогнозує час до перетину наступного порогу на основі лімітуючих факторів, використовуючи історичний тренд подвоєння спроможностей (від 3.5 до 7.0 місяців).
+        st.markdown(f"""
+        **Горизонт автономності моделі-лідера:**
+        * **Горизонт:** довжина завдання (у годинах роботи експерта-людини), яке модель виконує із заданою надійністю: 50% ($T_{{50}}$) або 80% ($T_{{80}}$). Це головний вимір автономності моделі.
+        * **Лінія лідера:** поточний максимум горизонту за датами релізу. Підписані точки це моделі, що встановили новий рекорд; напівпрозорі точки це інші виміряні моделі.
+        * **Джерела (окремо):** METR (програмні та дослідницько-інженерні завдання), UK AISI (кібер-завдання) і, як допоміжний сигнал, Redwood Research (міркування без ланцюжка думок). Різні бенчмарки й рівні надійності ніколи не зшиваються в одну криву.
+        * **Логарифмічна шкала:** вертикальна вісь логарифмічна, тому стабільне експоненційне зростання виглядає прямою лінією. Час подвоєння рахується між першим і останнім рекордом кожного ряду.
+        * **Стеля вимірювань:** METR $T_{{50}}$ надійний лише приблизно до **{INSTRUMENT_CEILING_H:.0f} годин**; вище значення цензуровані, реальний горизонт може бути більшим. Дані METR більше не оновлюються, тому цей ряд закінчується на останньому виміру.
         """)
 
 with st.expander(L["circle_method_expander"]):
