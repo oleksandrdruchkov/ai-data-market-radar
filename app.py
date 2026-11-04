@@ -645,7 +645,7 @@ else:
             plot_bgcolor="#ffffff",
             margin=dict(l=10, r=10, t=10, b=10),
             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_max + pd.Timedelta(days=130)]),
+            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_max + pd.Timedelta(days=200)]),
             yaxis=dict(
                 type="log",
                 range=[float(np.log10(y_lo)), float(np.log10(y_hi))],
