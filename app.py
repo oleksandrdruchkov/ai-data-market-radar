@@ -376,8 +376,8 @@ def apply_clean_layout(fig, height=250):
         plot_bgcolor="#ffffff",
         font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
         margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(showgrid=True, gridcolor="#f1f5f9", tickfont=dict(color="#475569", size=9), dtick=1),
-        yaxis=dict(showgrid=False, tickfont=dict(color="#0f172a", size=10)),
+        xaxis=dict(showgrid=True, gridcolor="#f1f5f9", tickfont=dict(color="#475569", size=9), dtick=1, automargin=True),
+        yaxis=dict(showgrid=False, tickfont=dict(color="#0f172a", size=10), automargin=True),
         showlegend=False
     )
     return fig
@@ -782,16 +782,16 @@ else:
             plot_bgcolor="#ffffff",
             margin=dict(l=10, r=10, t=10, b=10),
             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_end]),
+            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_end], automargin=True),
             yaxis=dict(
                 range=[0, 110], tickvals=pct_ticks, ticktext=[f"{p}%" for p in pct_ticks],
-                showgrid=True, gridcolor="#f1f5f9",
+                showgrid=True, gridcolor="#f1f5f9", automargin=True, title_standoff=8,
                 title="SAI_T, % of reference" if is_en else "SAI_T, % від еталона"
             ),
             yaxis2=dict(
                 overlaying="y", side="right", range=[0, 110],
                 tickvals=[float(sai_t(h)) for h in hour_ticks], ticktext=hour_text,
-                showgrid=False, tickfont=dict(size=9, color="#64748b")
+                showgrid=False, tickfont=dict(size=9, color="#64748b"), automargin=True
             ),
             legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
             showlegend=True
@@ -903,8 +903,8 @@ else:
             plot_bgcolor="#ffffff",
             margin=dict(l=10, r=10, t=10, b=10),
             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False, range=[e["release_date"].min() - pd.Timedelta(days=30), e["release_date"].max() + pd.Timedelta(days=75)]),
-            yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI"),
+            xaxis=dict(showgrid=False, range=[e["release_date"].min() - pd.Timedelta(days=30), e["release_date"].max() + pd.Timedelta(days=75)], automargin=True),
+            yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI", automargin=True, title_standoff=8),
             showlegend=False
         )
         st.plotly_chart(fig_eci, use_container_width=True, theme=None, config={'displayModeBar': False})
@@ -1002,6 +1002,7 @@ if not matching_rows.empty:
         fig_circ.update_traces(
             textinfo="percent+label",
             textposition="outside",
+            automargin=True,
             sort=False,
             showlegend=False
         )
