@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import streamlit as st
 import pandas as pd
@@ -207,12 +208,13 @@ def load_data():
 
 @st.cache_data(ttl=60)
 def load_horizon_data():
-    """Виміри горизонту автономності моделей з усіх джерел (METR, UK AISI, Redwood ...)."""
+    """Виміри горизонту автономності моделей з усіх джерел (METR, UK AISI, Redwood ...).
+    Повертає (DataFrame, текст помилки або None), щоб збій читання не маскувався під порожню таблицю."""
     try:
         res = supabase.table("fct_autonomy_horizons").select("*").eq("is_synthetic", False).execute()
-        return pd.DataFrame(res.data)
-    except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(res.data), None
+    except Exception as e:
+        return pd.DataFrame(), str(e)[:300]
 
 @st.cache_data(ttl=120)
 def load_circle_data():
@@ -240,7 +242,7 @@ def load_circle_data():
         return pd.DataFrame()
 
 df_skills_base, df_arxiv, df_health = load_data()
-df_hor = load_horizon_data()
+df_hor, hor_error = load_horizon_data()
 df_circ_raw = load_circle_data()
 
 # ==========================================
@@ -468,6 +470,7 @@ else:
 # ==========================================
 INSTRUMENT_CEILING_H = 16.0   # стеля METR T50
 REQUIRED_COLS = {"source", "metric", "model_name", "release_date", "value_hours"}
+HISTORY_START = pd.Timestamp("2023-01-01")   # за замовчуванням показуємо еру GPT-4 і далі
 
 # series_id = "<source>|<metric>" -> (підпис EN, підпис UA, колір)
 SERIES_META = {
@@ -488,11 +491,19 @@ def series_color(sid):
     meta = SERIES_META.get(sid)
     return meta[2] if meta else "#0f766e"
 
+def short_name(name):
+    """gpt-5-2025-08-07 -> gpt-5 (дата в кінці назви зайва для підпису)."""
+    return re.sub(r"[-_]?20\d{2}-?\d{2}-?\d{2}$", "", str(name))
+
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['horizon_title']}</div>", unsafe_allow_html=True)
 
 if df_hor.empty or not REQUIRED_COLS.issubset(df_hor.columns):
     st.info("Data synchronization in progress." if is_en else "Триває збір даних горизонтів.")
+    if hor_error:
+        st.caption(f"⚠️ fct_autonomy_horizons: {hor_error}")
+    elif not df_hor.empty:
+        st.caption("⚠️ Missing columns: " + ", ".join(sorted(REQUIRED_COLS - set(df_hor.columns))))
 else:
     d = df_hor.copy()
     d["release_date"] = pd.to_datetime(d["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
@@ -511,15 +522,33 @@ else:
         format_func=series_label,
         label_visibility="collapsed"
     )
+    show_full = st.checkbox(
+        "Full history (from 2019)" if is_en else "Вся історія (з 2019)",
+        value=False
+    )
+
+    d_sel = d[d["series_id"].isin(selected_series)]
+    if not show_full:
+        d_sel = d_sel[d_sel["release_date"] >= HISTORY_START]
 
     if not selected_series:
         st.caption("Select at least one series." if is_en else "Оберіть хоча б один ряд.")
+    elif d_sel.empty:
+        st.caption("No data for the selected series." if is_en else "Немає даних для обраних рядів.")
     else:
+        show_ceiling = "METR|T50" in selected_series
+        x_min, x_max = d_sel["release_date"].min(), d_sel["release_date"].max()
+        y_lo = d_sel["value_hours"].min() / 1.5
+        y_hi = d_sel["value_hours"].max()
+        if show_ceiling:
+            y_hi = max(y_hi, INSTRUMENT_CEILING_H)
+        y_hi *= 2
+
         fig_tl = go.Figure()
         notes = []
 
         for sid in selected_series:
-            sub = d[d["series_id"] == sid].sort_values("release_date")
+            sub = d_sel[d_sel["series_id"] == sid].sort_values("release_date")
             # одна точка на модель (найсвіжіший замір)
             sub = sub.drop_duplicates(subset=["model_name"], keep="last").sort_values("release_date").reset_index(drop=True)
             if sub.empty:
@@ -529,7 +558,7 @@ else:
             name = series_label(sid)
             sub["frontier"] = sub["value_hours"].cummax()
             sub["is_record"] = sub["value_hours"] >= sub["frontier"]
-            recs = sub[sub["is_record"]]
+            recs = sub[sub["is_record"]].reset_index(drop=True)
             others = sub[~sub["is_record"]]
 
             # решта моделей - напівпрозорі точки
@@ -552,15 +581,20 @@ else:
                 hoverinfo="skip"
             ))
 
-            # рекордсмени з підписами
+            # рекордсмени: підписуємо лише останніх п'ять, щоб текст не накладався
+            n_rec = len(recs)
+            label_from = max(0, n_rec - 5)
+            rec_text = [short_name(n) if i >= label_from else "" for i, n in enumerate(recs["model_name"])]
+            rec_pos = ["top left" if i % 2 == 0 else "bottom right" for i in range(n_rec)]
             fig_tl.add_trace(go.Scatter(
                 x=recs["release_date"], y=recs["value_hours"],
                 mode="markers+text",
                 marker=dict(size=9, color=color),
-                text=recs["model_name"],
-                textposition="top left",
+                text=rec_text,
+                textposition=rec_pos,
                 textfont=dict(size=9, color="#0f172a"),
-                hovertemplate="%{text}<br>%{y:.2f} h<extra>" + name + "</extra>",
+                hovertext=recs["model_name"],
+                hovertemplate="%{hovertext}<br>%{y:.2f} h<extra>" + name + "</extra>",
                 showlegend=False
             ))
 
@@ -569,7 +603,7 @@ else:
                 f"last measurement {sub['release_date'].max():%Y-%m-%d}" if is_en
                 else f"останній вимір {sub['release_date'].max():%Y-%m-%d}"
             )
-            if len(recs) >= 2:
+            if n_rec >= 2:
                 span_days = (recs["release_date"].iloc[-1] - recs["release_date"].iloc[0]).days
                 growth = recs["value_hours"].iloc[-1] / recs["value_hours"].iloc[0]
                 if span_days > 0 and growth > 1:
@@ -578,26 +612,33 @@ else:
                              else f", подвоєння лідера ~{dbl_months:.1f} міс.")
             notes.append(line)
 
-        if "METR|T50" in selected_series:
-            fig_tl.add_hline(
-                y=INSTRUMENT_CEILING_H,
-                line_dash="dash",
-                line_color="#dc2626",
-                annotation_text="METR ceiling 16h" if is_en else "Стеля METR 16 год",
-                annotation_position="top left",
-                annotation_font_size=9,
-                annotation_font_color="#dc2626"
-            )
+        # стеля METR малюється лінією-трасою, а не add_hline: add_hline ламає автомасштаб логарифмічної осі
+        if show_ceiling:
+            fig_tl.add_trace(go.Scatter(
+                x=[x_min, x_max], y=[INSTRUMENT_CEILING_H, INSTRUMENT_CEILING_H],
+                mode="lines+text",
+                line=dict(color="#dc2626", width=1, dash="dash"),
+                text=["", "METR ceiling 16h" if is_en else "Стеля METR 16 год"],
+                textposition="top left",
+                textfont=dict(size=9, color="#dc2626"),
+                hoverinfo="skip",
+                showlegend=False
+            ))
 
+        # круглі позначки осі в годинах замість SI-префіксів (k, M, G, T)
+        tick_vals = [v for v in (0.001, 0.01, 0.1, 1, 10, 100, 1000) if y_lo <= v <= y_hi]
         fig_tl.update_layout(
-            height=340,
+            height=360,
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             margin=dict(l=10, r=10, t=10, b=10),
             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False),
+            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_max + pd.Timedelta(days=45)]),
             yaxis=dict(
                 type="log",
+                range=[float(np.log10(y_lo)), float(np.log10(y_hi))],
+                tickvals=tick_vals,
+                ticktext=[f"{v:g}" for v in tick_vals],
                 showgrid=True,
                 gridcolor="#f1f5f9",
                 title="Horizon, hours" if is_en else "Горизонт, год"
@@ -736,7 +777,7 @@ with st.expander(L["method_expander"]):
         **Autonomy Horizon of the Leading Model:**
         * **Horizon:** the length of a task (in hours of human expert work) that a model completes with a given reliability: 50% ($T_{{50}}$) or 80% ($T_{{80}}$). It is the main measure of model autonomy.
         * **Leader line:** the running maximum of the horizon over release dates. Labeled points are the models that set a new record; faint points are other measured models.
-        * **Sources (kept separate):** METR (software and research-engineering tasks), UK AISI (cyber tasks) and, as an auxiliary signal, Redwood Research (no chain-of-thought reasoning). Different benchmarks and reliability levels are never merged into one curve.
+        * **Sources (kept separate):** METR via Epoch AI, CC BY 4.0 (software and research-engineering tasks), UK AISI (cyber tasks) and, as an auxiliary signal, Redwood Research (no chain-of-thought reasoning). Different benchmarks and reliability levels are never merged into one curve.
         * **Log scale:** the vertical axis is logarithmic, so steady exponential growth appears as a straight line. The doubling time is computed between the first and the latest record of each series.
         * **Instrument ceiling:** METR $T_{{50}}$ is reliable only up to about **{INSTRUMENT_CEILING_H:.0f} hours**; above it values are censored and the real horizon may be longer. METR data is no longer updated, so that series ends at its last measurement.
         """)
@@ -745,7 +786,7 @@ with st.expander(L["method_expander"]):
         **Горизонт автономності моделі-лідера:**
         * **Горизонт:** довжина завдання (у годинах роботи експерта-людини), яке модель виконує із заданою надійністю: 50% ($T_{{50}}$) або 80% ($T_{{80}}$). Це головний вимір автономності моделі.
         * **Лінія лідера:** поточний максимум горизонту за датами релізу. Підписані точки це моделі, що встановили новий рекорд; напівпрозорі точки це інші виміряні моделі.
-        * **Джерела (окремо):** METR (програмні та дослідницько-інженерні завдання), UK AISI (кібер-завдання) і, як допоміжний сигнал, Redwood Research (міркування без ланцюжка думок). Різні бенчмарки й рівні надійності ніколи не зшиваються в одну криву.
+        * **Джерела (окремо):** METR через Epoch AI, CC BY 4.0 (програмні та дослідницько-інженерні завдання), UK AISI (кібер-завдання) і, як допоміжний сигнал, Redwood Research (міркування без ланцюжка думок). Різні бенчмарки й рівні надійності ніколи не зшиваються в одну криву.
         * **Логарифмічна шкала:** вертикальна вісь логарифмічна, тому стабільне експоненційне зростання виглядає прямою лінією. Час подвоєння рахується між першим і останнім рекордом кожного ряду.
         * **Стеля вимірювань:** METR $T_{{50}}$ надійний лише приблизно до **{INSTRUMENT_CEILING_H:.0f} годин**; вище значення цензуровані, реальний горизонт може бути більшим. Дані METR більше не оновлюються, тому цей ряд закінчується на останньому виміру.
         """)
