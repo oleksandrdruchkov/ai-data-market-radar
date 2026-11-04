@@ -418,7 +418,7 @@ if selected_view == L["tab_demand"]:
             insidetextfont=dict(color="#ffffff", size=10),
             width=0.42
         )
-        st.plotly_chart(fig_skills, use_container_width=True, config={'responsive': True, 'displayModeBar': False})
+        st.plotly_chart(fig_skills, use_container_width=True, theme=None, config={'responsive': True, 'displayModeBar': False})
     else:
         st.caption(f"{L['empty_skills']} {reg_lookup}.")
 
@@ -626,7 +626,7 @@ else:
             # рекордсмени: підписуємо лише останніх п'ять, щоб текст не накладався
             n_rec = len(recs)
             label_from = max(0, n_rec - 5)
-            rec_text = [short_name(n) if i >= label_from else "" for i, n in enumerate(recs["model_name"])]
+            rec_text = [short_name(n) if (sid == primary_sid and i >= label_from) else "" for i, n in enumerate(recs["model_name"])]
             rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
             fig_tl.add_trace(go.Scatter(
                 x=recs["release_date"], y=sai_t(recs["value_hours"]),
@@ -705,8 +705,11 @@ else:
                 fill="tonexty", fillcolor=hex_to_rgba(color, 0.12),
                 hoverinfo="skip", showlegend=False
             ))
+            m_c = n_dbl * d_c
+            months_c = np.append(months[months < m_c], m_c) if m_c <= m_end else months
+            dates_c = [t0 + pd.Timedelta(days=float(m) * DAYS_PER_MONTH) for m in months_c]
             fig_tl.add_trace(go.Scatter(
-                x=dates, y=project_sai(T0, d_c, months),
+                x=dates_c, y=project_sai(T0, d_c, months_c),
                 mode="lines", line=dict(color=color, width=2, dash="dot"),
                 name="Projection (illustrative)" if is_en else "Проєкція (ілюстративна)",
                 hoverinfo="skip"
@@ -793,7 +796,7 @@ else:
             legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
             showlegend=True
         )
-        st.plotly_chart(fig_tl, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig_tl, use_container_width=True, theme=None, config={'displayModeBar': False})
 
         if primary:
             cur = float(sai_t(primary["T0"]))
@@ -904,7 +907,7 @@ else:
             yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI"),
             showlegend=False
         )
-        st.plotly_chart(fig_eci, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig_eci, use_container_width=True, theme=None, config={'displayModeBar': False})
 
         leader = recs.iloc[-1]
         cap = (f"Current record: {leader['label']} (ECI {leader['eci']:.1f}), last measurement {e['release_date'].max():%Y-%m-%d}"
@@ -1009,7 +1012,7 @@ if not matching_rows.empty:
             margin=dict(l=20, r=20, t=20, b=20),
             font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI")
         )
-        st.plotly_chart(fig_circ, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig_circ, use_container_width=True, theme=None, config={'displayModeBar': False})
 
         red_share = (circ_values[3] / circ_total) * 100 if circ_total > 0 else 0
         total_lbl = "Total actions" if is_en else "Всього дій"
