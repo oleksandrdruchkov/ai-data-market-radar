@@ -597,7 +597,7 @@ else:
             n_rec = len(recs)
             label_from = max(0, n_rec - 5)
             rec_text = [short_name(n) if i >= label_from else "" for i, n in enumerate(recs["model_name"])]
-            rec_pos = ["top left" if i % 2 == 0 else "bottom right" for i in range(n_rec)]
+            rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
             fig_tl.add_trace(go.Scatter(
                 x=recs["release_date"], y=recs["value_hours"],
                 mode="markers+text",
@@ -630,8 +630,8 @@ else:
                 x=[x_min, x_max], y=[INSTRUMENT_CEILING_H, INSTRUMENT_CEILING_H],
                 mode="lines+text",
                 line=dict(color="#dc2626", width=1, dash="dash"),
-                text=["", "METR ceiling 16h" if is_en else "Стеля METR 16 год"],
-                textposition="top left",
+                text=["METR ceiling 16h" if is_en else "Стеля METR 16 год", ""],
+                textposition="top right",
                 textfont=dict(size=9, color="#dc2626"),
                 hoverinfo="skip",
                 showlegend=False
@@ -645,7 +645,7 @@ else:
             plot_bgcolor="#ffffff",
             margin=dict(l=10, r=10, t=10, b=10),
             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_max + pd.Timedelta(days=45)]),
+            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_max + pd.Timedelta(days=130)]),
             yaxis=dict(
                 type="log",
                 range=[float(np.log10(y_lo)), float(np.log10(y_hi))],
@@ -721,7 +721,7 @@ else:
         n_rec = len(recs)
         label_from = max(0, n_rec - 4)
         rec_text = [str(n) if i >= label_from else "" for i, n in enumerate(recs["label"])]
-        rec_pos = ["top left" if i % 2 == 0 else "bottom right" for i in range(n_rec)]
+        rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
         err_up = (recs["ci_high"] - recs["eci"]).fillna(0).clip(lower=0)
         err_dn = (recs["eci"] - recs["ci_low"]).fillna(0).clip(lower=0)
         fig_eci.add_trace(go.Scatter(
@@ -746,7 +746,7 @@ else:
             plot_bgcolor="#ffffff",
             margin=dict(l=10, r=10, t=10, b=10),
             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False),
+            xaxis=dict(showgrid=False, range=[e["release_date"].min() - pd.Timedelta(days=30), e["release_date"].max() + pd.Timedelta(days=75)]),
             yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI"),
             showlegend=False
         )
