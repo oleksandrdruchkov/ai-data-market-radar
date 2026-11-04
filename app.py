@@ -216,6 +216,15 @@ def load_horizon_data():
     except Exception as e:
         return pd.DataFrame(), str(e)[:300]
 
+@st.cache_data(ttl=60)
+def load_capability_data():
+    """Epoch Capabilities Index (загальна здатність моделей, у пунктах індексу)."""
+    try:
+        res = supabase.table("fct_capability_index").select("*").execute()
+        return pd.DataFrame(res.data), None
+    except Exception as ex:
+        return pd.DataFrame(), str(ex)[:300]
+
 @st.cache_data(ttl=120)
 def load_circle_data():
     try:
@@ -243,6 +252,7 @@ def load_circle_data():
 
 df_skills_base, df_arxiv, df_health = load_data()
 df_hor, hor_error = load_horizon_data()
+df_eci, eci_error = load_capability_data()
 df_circ_raw = load_circle_data()
 
 # ==========================================
@@ -282,6 +292,7 @@ L = {
     "time_3_6": "~3–6 Months" if is_en else "~3–6 місяців",
     "time_6_9": "~6–9 Months" if is_en else "~6–9 місяців",
     "horizon_title": "🤖 Autonomy Horizon of Frontier Models" if is_en else "🤖 Горизонт автономності топ-моделей",
+    "capability_title": "📈 General Capability of the Leading Model (Epoch ECI)" if is_en else "📈 Загальна здатність моделі-лідера (Epoch ECI)",
     "circle_title": "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ",
     "method_expander": "ℹ️ Methodology: Autonomy Horizon Chart" if is_en else "ℹ️ Методологія: графік горизонту автономності",
     "circle_method_expander": "📐 Methodology: Control vs Autonomy Action Circle" if is_en else "📐 Методологія розрахунку: Контроль та автономність дій ШІ"
@@ -471,6 +482,7 @@ else:
 INSTRUMENT_CEILING_H = 16.0   # стеля METR T50
 REQUIRED_COLS = {"source", "metric", "model_name", "release_date", "value_hours"}
 HISTORY_START = pd.Timestamp("2023-01-01")   # за замовчуванням показуємо еру GPT-4 і далі
+show_full = False
 
 # series_id = "<source>|<metric>" -> (підпис EN, підпис UA, колір)
 SERIES_META = {
@@ -657,6 +669,111 @@ else:
         )
 
 # ==========================================
+# ЗАГАЛЬНА ЗДАТНІСТЬ МОДЕЛІ-ЛІДЕРА (EPOCH CAPABILITIES INDEX)
+# ==========================================
+ECI_COLOR = "#0d9488"
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['capability_title']}</div>", unsafe_allow_html=True)
+
+if df_eci.empty or not {"model_name", "release_date", "eci"}.issubset(df_eci.columns):
+    st.info("Data synchronization in progress." if is_en else "Триває збір даних індексу здатності.")
+    if eci_error:
+        st.caption(f"⚠️ fct_capability_index: {eci_error}")
+else:
+    e = df_eci.copy()
+    e["release_date"] = pd.to_datetime(e["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
+    for col in ("eci", "ci_low", "ci_high"):
+        e[col] = pd.to_numeric(e[col], errors="coerce") if col in e.columns else np.nan
+    e["label"] = e["display_name"].fillna(e["model_name"]) if "display_name" in e.columns else e["model_name"]
+    e = e.dropna(subset=["release_date", "eci"])
+    if not show_full:
+        e = e[e["release_date"] >= HISTORY_START]
+
+    if e.empty:
+        st.caption("No data for the selected period." if is_en else "Немає даних за обраний період.")
+    else:
+        e = e.sort_values("release_date").reset_index(drop=True)
+        e["frontier"] = e["eci"].cummax()
+        e["is_record"] = e["eci"] >= e["frontier"]
+        recs = e[e["is_record"]].reset_index(drop=True)
+        others = e[~e["is_record"]]
+
+        fig_eci = go.Figure()
+        if not others.empty:
+            fig_eci.add_trace(go.Scatter(
+                x=others["release_date"], y=others["eci"],
+                mode="markers",
+                marker=dict(size=6, color=ECI_COLOR, opacity=0.25),
+                text=others["label"],
+                hovertemplate="%{text}<br>ECI %{y:.1f}<extra></extra>",
+                showlegend=False
+            ))
+
+        fig_eci.add_trace(go.Scatter(
+            x=e["release_date"], y=e["frontier"],
+            mode="lines",
+            line=dict(color=ECI_COLOR, width=2, shape="hv"),
+            hoverinfo="skip",
+            showlegend=False
+        ))
+
+        n_rec = len(recs)
+        label_from = max(0, n_rec - 4)
+        rec_text = [str(n) if i >= label_from else "" for i, n in enumerate(recs["label"])]
+        rec_pos = ["top left" if i % 2 == 0 else "bottom right" for i in range(n_rec)]
+        err_up = (recs["ci_high"] - recs["eci"]).fillna(0).clip(lower=0)
+        err_dn = (recs["eci"] - recs["ci_low"]).fillna(0).clip(lower=0)
+        fig_eci.add_trace(go.Scatter(
+            x=recs["release_date"], y=recs["eci"],
+            mode="markers+text",
+            marker=dict(size=9, color=ECI_COLOR),
+            error_y=dict(type="data", symmetric=False, array=err_up, arrayminus=err_dn,
+                         color=ECI_COLOR, thickness=1, width=3),
+            text=rec_text,
+            textposition=rec_pos,
+            textfont=dict(size=9, color="#0f172a"),
+            hovertext=recs["label"],
+            hovertemplate="%{hovertext}<br>ECI %{y:.1f}<extra></extra>",
+            showlegend=False
+        ))
+
+        y_lo = float((e["ci_low"].fillna(e["eci"])).min()) - 3
+        y_hi = float((e["ci_high"].fillna(e["eci"])).max()) + 4
+        fig_eci.update_layout(
+            height=320,
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            margin=dict(l=10, r=10, t=10, b=10),
+            font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+            xaxis=dict(showgrid=False),
+            yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI"),
+            showlegend=False
+        )
+        st.plotly_chart(fig_eci, use_container_width=True, config={'displayModeBar': False})
+
+        leader = recs.iloc[-1]
+        cap = (f"Current record: {leader['label']} (ECI {leader['eci']:.1f}), last measurement {e['release_date'].max():%Y-%m-%d}"
+               if is_en else
+               f"Поточний рекорд: {leader['label']} (ECI {leader['eci']:.1f}), останній вимір {e['release_date'].max():%Y-%m-%d}")
+        st.caption(cap)
+
+        # чесна примітка: лідери з перекриттям довірчих інтервалів не розрізняються статистично
+        top2 = e.sort_values("eci", ascending=False).head(2)
+        if len(top2) == 2 and pd.notna(top2.iloc[1]["ci_high"]) and pd.notna(top2.iloc[0]["ci_low"]) \
+                and top2.iloc[1]["ci_high"] >= top2.iloc[0]["ci_low"]:
+            st.caption(
+                "The top models' confidence intervals overlap: the leader cannot be ranked reliably."
+                if is_en else
+                "Довірчі інтервали провідних моделей перекриваються: лідера не можна впевнено визначити."
+            )
+        st.caption(
+            "ECI is a composite index in points (not hours); source: Epoch AI, CC BY 4.0."
+            if is_en else
+            "ECI це складений індекс у пунктах (не години); джерело: Epoch AI, CC BY 4.0."
+        )
+
+# ==========================================
 # КОЛО КОНТРОЛЮ / АВТОНОМНОСТІ ДІЙ ШІ
 # ==========================================
 CIRCLE_SEGMENTS = {
@@ -780,6 +897,7 @@ with st.expander(L["method_expander"]):
         * **Sources (kept separate):** METR via Epoch AI, CC BY 4.0 (software and research-engineering tasks), UK AISI (cyber tasks) and, as an auxiliary signal, Redwood Research (no chain-of-thought reasoning). Different benchmarks and reliability levels are never merged into one curve.
         * **Log scale:** the vertical axis is logarithmic, so steady exponential growth appears as a straight line. The doubling time is computed between the first and the latest record of each series.
         * **Instrument ceiling:** METR $T_{{50}}$ is reliable only up to about **{INSTRUMENT_CEILING_H:.0f} hours**; above it values are censored and the real horizon may be longer. METR data is no longer updated, so that series ends at its last measurement.
+        * **Epoch Capabilities Index (ECI):** a composite capability score built from many benchmarks, in index points rather than hours. It keeps updating after the METR horizon series stopped, so it shows the current leader. Models whose confidence intervals overlap cannot be ranked reliably.
         """)
     else:
         st.markdown(f"""
@@ -788,7 +906,8 @@ with st.expander(L["method_expander"]):
         * **Лінія лідера:** поточний максимум горизонту за датами релізу. Підписані точки це моделі, що встановили новий рекорд; напівпрозорі точки це інші виміряні моделі.
         * **Джерела (окремо):** METR через Epoch AI, CC BY 4.0 (програмні та дослідницько-інженерні завдання), UK AISI (кібер-завдання) і, як допоміжний сигнал, Redwood Research (міркування без ланцюжка думок). Різні бенчмарки й рівні надійності ніколи не зшиваються в одну криву.
         * **Логарифмічна шкала:** вертикальна вісь логарифмічна, тому стабільне експоненційне зростання виглядає прямою лінією. Час подвоєння рахується між першим і останнім рекордом кожного ряду.
-        * **Стеля вимірювань:** METR $T_{{50}}$ надійний лише приблизно до **{INSTRUMENT_CEILING_H:.0f} годин**; вище значення цензуровані, реальний горизонт може бути більшим. Дані METR більше не оновлюються, тому цей ряд закінчується на останньому виміру.
+        * **Стеля вимірювань:** METR $T_{{50}}$ надійний лише приблизно до **{INSTRUMENT_CEILING_H:.0f} годин**; вище значення цензуровані, реальний горизонт може бути більшим. Дані METR більше не оновлюються, тому цей ряд закінчується на останньому вимірі.
+        * **Epoch Capabilities Index (ECI):** складений показник здатності за багатьма бенчмарками, в пунктах індексу, а не в годинах. Він продовжує оновлюватися після того, як ряд горизонтів METR зупинився, тож показує поточного лідера. Моделі з перекритими довірчими інтервалами не можна впевнено ранжувати.
         """)
 
 with st.expander(L["circle_method_expander"]):
