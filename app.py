@@ -291,7 +291,7 @@ L = {
     "time_1_3": "~1–3 Months" if is_en else "~1–3 місяці",
     "time_3_6": "~3–6 Months" if is_en else "~3–6 місяців",
     "time_6_9": "~6–9 Months" if is_en else "~6–9 місяців",
-    "horizon_title": "🤖 Autonomy Horizon of Frontier Models" if is_en else "🤖 Горизонт автономності топ-моделей",
+    "horizon_title": "🤖 Leader Autonomy: Distance to the Reference" if is_en else "🤖 Автономність лідера: відстань до еталона",
     "capability_title": "📈 General Capability of the Leading Model (Epoch ECI)" if is_en else "📈 Загальна здатність моделі-лідера (Epoch ECI)",
     "circle_title": "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ",
     "method_expander": "ℹ️ Methodology: Autonomy Horizon Chart" if is_en else "ℹ️ Методологія: графік горизонту автономності",
@@ -477,9 +477,14 @@ else:
         st.caption(L["empty_arxiv"])
 
 # ==========================================
-# ЧАСОВИЙ ГРАФІК: ГОРИЗОНТ АВТОНОМНОСТІ МОДЕЛІ-ЛІДЕРА
+# ЧАСОВИЙ ГРАФІК: АВТОНОМНІСТЬ МОДЕЛІ-ЛІДЕРА У ШКАЛІ SAI_T
 # ==========================================
-INSTRUMENT_CEILING_H = 16.0   # стеля METR T50
+INSTRUMENT_CEILING_H = 16.0            # стеля METR T50
+REFERENCE_MIN = 124800.0               # еталон: 1 людино-рік = 2 080 год
+REFERENCE_H = REFERENCE_MIN / 60.0
+DOUBLING_RANGE_MONTHS = (3.5, 7.0)     # історичний діапазон подвоєння спроможностей
+PROJECTION_MAX_YEARS = 6
+DAYS_PER_MONTH = 30.4375
 REQUIRED_COLS = {"source", "metric", "model_name", "release_date", "value_hours"}
 HISTORY_START = pd.Timestamp("2023-01-01")   # за замовчуванням показуємо еру GPT-4 і далі
 show_full = False
@@ -507,6 +512,24 @@ def short_name(name):
     """gpt-5-2025-08-07 -> gpt-5 (дата в кінці назви зайва для підпису)."""
     return re.sub(r"[-_]?20\d{2}-?\d{2}-?\d{2}$", "", str(name))
 
+def hex_to_rgba(color, alpha):
+    c = color.lstrip("#")
+    r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+def sai_t(hours):
+    """SAI_T у відсотках: 100 * log10(1 + T_хв) / log10(124 800). 100% = еталон 1 людино-рік."""
+    t_min = np.asarray(hours, dtype=float) * 60.0
+    return 100.0 * np.log10(1.0 + t_min) / np.log10(REFERENCE_MIN)
+
+def project_sai(t0_hours, doubling_months, months):
+    """SAI_T при експоненційному зростанні горизонту; обрізається на 100% (еталон)."""
+    grown = t0_hours * np.power(2.0, np.asarray(months, dtype=float) / doubling_months)
+    return np.minimum(sai_t(grown), 100.0)
+
+def fmt_hours(h):
+    return f"{h:.1f}" if h < 100 else f"{h:.0f}"
+
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['horizon_title']}</div>", unsafe_allow_html=True)
 
@@ -520,6 +543,8 @@ else:
     d = df_hor.copy()
     d["release_date"] = pd.to_datetime(d["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
     d["value_hours"] = pd.to_numeric(d["value_hours"], errors="coerce")
+    for ci_col in ("ci_low", "ci_high"):
+        d[ci_col] = pd.to_numeric(d[ci_col], errors="coerce") if ci_col in d.columns else np.nan
     d = d.dropna(subset=["release_date", "value_hours", "model_name"])
     d = d[d["value_hours"] > 0]
     d["series_id"] = d["source"].astype(str) + "|" + d["metric"].astype(str)
@@ -534,10 +559,17 @@ else:
         format_func=series_label,
         label_visibility="collapsed"
     )
-    show_full = st.checkbox(
-        "Full history (from 2019)" if is_en else "Вся історія (з 2019)",
-        value=False
-    )
+    col_full, col_proj = st.columns(2)
+    with col_full:
+        show_full = st.checkbox(
+            "Full history (from 2019)" if is_en else "Вся історія (з 2019)",
+            value=False
+        )
+    with col_proj:
+        show_proj = st.checkbox(
+            "Projection to the reference" if is_en else "Проєкція до еталона",
+            value=True
+        )
 
     d_sel = d[d["series_id"].isin(selected_series)]
     if not show_full:
@@ -549,15 +581,12 @@ else:
         st.caption("No data for the selected series." if is_en else "Немає даних для обраних рядів.")
     else:
         show_ceiling = "METR|T50" in selected_series
+        primary_sid = "METR|T50" if show_ceiling else selected_series[0]
         x_min, x_max = d_sel["release_date"].min(), d_sel["release_date"].max()
-        y_lo = d_sel["value_hours"].min() / 1.5
-        y_hi = d_sel["value_hours"].max()
-        if show_ceiling:
-            y_hi = max(y_hi, INSTRUMENT_CEILING_H)
-        y_hi *= 2
 
         fig_tl = go.Figure()
         notes = []
+        primary = None   # дані лідера основного ряду для проєкції
 
         for sid in selected_series:
             sub = d_sel[d_sel["series_id"] == sid].sort_values("release_date")
@@ -576,17 +605,18 @@ else:
             # решта моделей - напівпрозорі точки
             if not others.empty:
                 fig_tl.add_trace(go.Scatter(
-                    x=others["release_date"], y=others["value_hours"],
+                    x=others["release_date"], y=sai_t(others["value_hours"]),
                     mode="markers",
                     marker=dict(size=6, color=color, opacity=0.3),
                     text=others["model_name"],
-                    hovertemplate="%{text}<br>%{y:.2f} h<extra>" + name + "</extra>",
+                    customdata=others["value_hours"],
+                    hovertemplate="%{text}<br>%{customdata:.2f} h · SAI_T %{y:.0f}%<extra>" + name + "</extra>",
                     showlegend=False
                 ))
 
-            # лінія лідера (ступінчаста) для легенди
+            # лінія лідера (ступінчаста)
             fig_tl.add_trace(go.Scatter(
-                x=sub["release_date"], y=sub["frontier"],
+                x=sub["release_date"], y=sai_t(sub["frontier"]),
                 mode="lines",
                 line=dict(color=color, width=2, shape="hv"),
                 name=name,
@@ -599,69 +629,193 @@ else:
             rec_text = [short_name(n) if i >= label_from else "" for i, n in enumerate(recs["model_name"])]
             rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
             fig_tl.add_trace(go.Scatter(
-                x=recs["release_date"], y=recs["value_hours"],
+                x=recs["release_date"], y=sai_t(recs["value_hours"]),
                 mode="markers+text",
                 marker=dict(size=9, color=color),
                 text=rec_text,
                 textposition=rec_pos,
                 textfont=dict(size=9, color="#0f172a"),
                 hovertext=recs["model_name"],
-                hovertemplate="%{hovertext}<br>%{y:.2f} h<extra>" + name + "</extra>",
+                customdata=recs["value_hours"],
+                hovertemplate="%{hovertext}<br>%{customdata:.2f} h · SAI_T %{y:.0f}%<extra>" + name + "</extra>",
                 showlegend=False
             ))
+
+            last = recs.iloc[-1]
+
+            # довірчий інтервал останнього рекорду (вус у шкалі SAI_T)
+            if pd.notna(last["ci_low"]) and pd.notna(last["ci_high"]) and last["ci_low"] > 0:
+                y_c = float(sai_t(last["value_hours"]))
+                fig_tl.add_trace(go.Scatter(
+                    x=[last["release_date"]], y=[y_c],
+                    mode="markers",
+                    marker=dict(size=1, opacity=0, color=color),
+                    error_y=dict(type="data", symmetric=False,
+                                 array=[float(sai_t(last["ci_high"])) - y_c],
+                                 arrayminus=[y_c - float(sai_t(last["ci_low"]))],
+                                 color=color, thickness=1.5, width=5),
+                    hoverinfo="skip", showlegend=False
+                ))
 
             # підпис: останній вимір + час подвоєння лідера
             line = f"**{name}:** " + (
                 f"last measurement {sub['release_date'].max():%Y-%m-%d}" if is_en
                 else f"останній вимір {sub['release_date'].max():%Y-%m-%d}"
             )
+            dbl_months = None
             if n_rec >= 2:
                 span_days = (recs["release_date"].iloc[-1] - recs["release_date"].iloc[0]).days
                 growth = recs["value_hours"].iloc[-1] / recs["value_hours"].iloc[0]
                 if span_days > 0 and growth > 1:
-                    dbl_months = span_days / 30.4 / np.log2(growth)
+                    dbl_months = span_days / DAYS_PER_MONTH / np.log2(growth)
                     line += (f", leader doubling ~{dbl_months:.1f} mo." if is_en
                              else f", подвоєння лідера ~{dbl_months:.1f} міс.")
             notes.append(line)
 
-        # стеля METR малюється лінією-трасою, а не add_hline: add_hline ламає автомасштаб логарифмічної осі
+            if sid == primary_sid:
+                primary = {
+                    "name": name, "color": color, "t0": last["release_date"],
+                    "T0": float(last["value_hours"]), "model": short_name(last["model_name"]),
+                    "ci_low": last["ci_low"], "ci_high": last["ci_high"],
+                    "dbl": dbl_months,
+                }
+
+        # ---- проєкція напрямку до еталона (ілюстративна екстраполяція) ----
+        x_end = x_max + pd.Timedelta(days=200)
+        proj_caption = None
+        T_cross = (REFERENCE_MIN - 1.0) / 60.0      # горизонт, де SAI_T = 100%
+        if show_proj and primary and primary["T0"] < T_cross:
+            T0, t0, color = primary["T0"], primary["t0"], primary["color"]
+            d_c = primary["dbl"] if primary["dbl"] else float(np.sqrt(DOUBLING_RANGE_MONTHS[0] * DOUBLING_RANGE_MONTHS[1]))
+            d_f = min(DOUBLING_RANGE_MONTHS[0], d_c)
+            d_s = max(DOUBLING_RANGE_MONTHS[1], d_c)
+            n_dbl = float(np.log2(T_cross / T0))
+            m_end = min(n_dbl * d_s, PROJECTION_MAX_YEARS * 12.0)
+            months = np.linspace(0.0, m_end, 80)
+            dates = [t0 + pd.Timedelta(days=float(m) * DAYS_PER_MONTH) for m in months]
+
+            # смуга невизначеності між швидким і повільним подвоєнням
+            fig_tl.add_trace(go.Scatter(
+                x=dates, y=project_sai(T0, d_s, months),
+                mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False
+            ))
+            fig_tl.add_trace(go.Scatter(
+                x=dates, y=project_sai(T0, d_f, months),
+                mode="lines", line=dict(width=0),
+                fill="tonexty", fillcolor=hex_to_rgba(color, 0.12),
+                hoverinfo="skip", showlegend=False
+            ))
+            fig_tl.add_trace(go.Scatter(
+                x=dates, y=project_sai(T0, d_c, months),
+                mode="lines", line=dict(color=color, width=2, dash="dot"),
+                name="Projection (illustrative)" if is_en else "Проєкція (ілюстративна)",
+                hoverinfo="skip"
+            ))
+
+            def cross_date(dm):
+                return t0 + pd.Timedelta(days=n_dbl * dm * DAYS_PER_MONTH)
+
+            c_central = cross_date(d_c)
+            if n_dbl * d_c <= m_end:
+                fig_tl.add_trace(go.Scatter(
+                    x=[c_central], y=[100.0],
+                    mode="markers+text",
+                    marker=dict(size=11, color=color, symbol="diamond"),
+                    text=[f"≈ {c_central:%Y-%m}"], textposition="bottom left",
+                    textfont=dict(size=10, color="#0f172a"),
+                    hoverinfo="skip", showlegend=False
+                ))
+            x_end = dates[-1] + pd.Timedelta(days=60)
+
+            if is_en:
+                proj_caption = (
+                    f"Distance to the reference from the latest record ({primary['model']}): ≈ {n_dbl:.1f} doublings. "
+                    f"At a doubling time of {d_c:.1f} months this is ≈ {c_central:%Y-%m} "
+                    f"(band for {d_f:.1f}–{d_s:.1f} months: {cross_date(d_f):%Y-%m} … {cross_date(d_s):%Y-%m})."
+                )
+            else:
+                proj_caption = (
+                    f"Відстань до еталона від останнього рекорду ({primary['model']}): ≈ {n_dbl:.1f} подвоєнь. "
+                    f"При подвоєнні кожні {d_c:.1f} міс. це ≈ {c_central:%Y-%m} "
+                    f"(смуга для {d_f:.1f}–{d_s:.1f} міс.: {cross_date(d_f):%Y-%m} … {cross_date(d_s):%Y-%m})."
+                )
+
+        # критична точка: еталон 1 людино-рік (100%)
+        fig_tl.add_trace(go.Scatter(
+            x=[x_min, x_end], y=[100.0, 100.0],
+            mode="lines+text",
+            line=dict(color="#b91c1c", width=1.5),
+            text=["Reference: 1 human-year (2 080 h)" if is_en else "Еталон: 1 людино-рік (2 080 год)", ""],
+            textposition="bottom right",
+            textfont=dict(size=9, color="#b91c1c"),
+            hoverinfo="skip", showlegend=False
+        ))
+
+        # стеля вимірювань METR (16 год) у шкалі SAI_T
         if show_ceiling:
             fig_tl.add_trace(go.Scatter(
-                x=[x_min, x_max], y=[INSTRUMENT_CEILING_H, INSTRUMENT_CEILING_H],
+                x=[x_min, x_max], y=[float(sai_t(INSTRUMENT_CEILING_H))] * 2,
                 mode="lines+text",
                 line=dict(color="#dc2626", width=1, dash="dash"),
                 text=["METR ceiling 16h" if is_en else "Стеля METR 16 год", ""],
                 textposition="top right",
                 textfont=dict(size=9, color="#dc2626"),
-                hoverinfo="skip",
-                showlegend=False
+                hoverinfo="skip", showlegend=False
             ))
 
-        # круглі позначки осі в годинах замість SI-префіксів (k, M, G, T)
-        tick_vals = [v for v in (0.001, 0.01, 0.1, 1, 10, 100, 1000) if y_lo <= v <= y_hi]
+        # права вісь: ті самі позиції в годинах
+        hour_ticks = [0.1, 1, 4, 16, 64, 260, 1040, REFERENCE_H]
+        hour_text = [f"{h:g} h" if is_en else f"{h:g} год" for h in hour_ticks[:-1]] + \
+                    ["2080 h" if is_en else "2080 год"]
+        fig_tl.add_trace(go.Scatter(
+            x=[x_min], y=[0], yaxis="y2", mode="markers",
+            marker=dict(opacity=0, size=1), hoverinfo="skip", showlegend=False
+        ))
+
+        pct_ticks = [0, 20, 40, 60, 80, 100]
         fig_tl.update_layout(
-            height=360,
+            height=400,
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             margin=dict(l=10, r=10, t=10, b=10),
             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_max + pd.Timedelta(days=200)]),
+            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_end]),
             yaxis=dict(
-                type="log",
-                range=[float(np.log10(y_lo)), float(np.log10(y_hi))],
-                tickvals=tick_vals,
-                ticktext=[f"{v:g}" for v in tick_vals],
-                showgrid=True,
-                gridcolor="#f1f5f9",
-                title="Horizon, hours" if is_en else "Горизонт, год"
+                range=[0, 110], tickvals=pct_ticks, ticktext=[f"{p}%" for p in pct_ticks],
+                showgrid=True, gridcolor="#f1f5f9",
+                title="SAI_T, % of reference" if is_en else "SAI_T, % від еталона"
+            ),
+            yaxis2=dict(
+                overlaying="y", side="right", range=[0, 110],
+                tickvals=[float(sai_t(h)) for h in hour_ticks], ticktext=hour_text,
+                showgrid=False, tickfont=dict(size=9, color="#64748b")
             ),
             legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
             showlegend=True
         )
         st.plotly_chart(fig_tl, use_container_width=True, config={'displayModeBar': False})
 
+        if primary:
+            cur = float(sai_t(primary["T0"]))
+            cur_txt = f"{cur:.0f}%"
+            if pd.notna(primary["ci_low"]) and pd.notna(primary["ci_high"]) and primary["ci_low"] > 0:
+                cur_txt += f" ({float(sai_t(primary['ci_low'])):.0f}–{float(sai_t(primary['ci_high'])):.0f}%)"
+            st.caption(
+                f"**Current SAI_T of the leader ({primary['model']}):** {cur_txt}, horizon {fmt_hours(primary['T0'])} h."
+                if is_en else
+                f"**Поточний SAI_T лідера ({primary['model']}):** {cur_txt}, горизонт {fmt_hours(primary['T0'])} год."
+            )
         for n in notes:
             st.caption(n)
+        if proj_caption:
+            st.caption(proj_caption)
+            st.caption(
+                "Illustrative extrapolation, not a forecast: it assumes exponential growth to continue. "
+                "The reference is a scale of task length, not the moment of loss of control."
+                if is_en else
+                "Ілюстративна екстраполяція, а не прогноз: вона припускає, що експоненційне зростання триватиме. "
+                "Еталон це шкала довжини завдання, а не момент втрати контролю."
+            )
         st.caption(
             "Series come from different benchmarks and are not directly comparable."
             if is_en else
@@ -890,24 +1044,32 @@ if not matching_rows.empty:
 # ==========================================
 with st.expander(L["method_expander"]):
     if is_en:
-        st.markdown(f"""
-        **Autonomy Horizon of the Leading Model:**
-        * **Horizon:** the length of a task (in hours of human expert work) that a model completes with a given reliability: 50% ($T_{{50}}$) or 80% ($T_{{80}}$). It is the main measure of model autonomy.
-        * **Leader line:** the running maximum of the horizon over release dates. Labeled points are the models that set a new record; faint points are other measured models.
-        * **Sources (kept separate):** METR via Epoch AI, CC BY 4.0 (software and research-engineering tasks), UK AISI (cyber tasks) and, as an auxiliary signal, Redwood Research (no chain-of-thought reasoning). Different benchmarks and reliability levels are never merged into one curve.
-        * **Log scale:** the vertical axis is logarithmic, so steady exponential growth appears as a straight line. The doubling time is computed between the first and the latest record of each series.
-        * **Instrument ceiling:** METR $T_{{50}}$ is reliable only up to about **{INSTRUMENT_CEILING_H:.0f} hours**; above it values are censored and the real horizon may be longer. METR data is no longer updated, so that series ends at its last measurement.
-        * **Epoch Capabilities Index (ECI):** a composite capability score built from many benchmarks, in index points rather than hours. It keeps updating after the METR horizon series stopped, so it shows the current leader. Models whose confidence intervals overlap cannot be ranked reliably.
+        st.markdown(r"""
+        **Autonomy of the leading model: distance to the reference point**
+        * **Measurement (third-party):** the 50% time horizon $T_{50}$ published by METR (via Epoch AI, CC BY 4.0): the length of a software task, in minutes of human expert work, that a model completes in 50% of attempts. These numbers are used as published.
+        * **Interpretation (ours):** the horizon is converted to the branch-length scale
+
+        $$SAI_T = \frac{\log_{10}(1 + T_{\min})}{\log_{10}(124\,800)} \times 100\%$$
+
+        where $124\,800$ min = 1 human-year (2 080 h) is the reference. 100% means a model that autonomously completes a task of one human-year of work. It is a scale of task length, not the moment of loss of control.
+        * **Leader line:** the running maximum over release dates. Labeled points set a new record; faint points are other measured models. The whisker is the confidence interval of the latest record.
+        * **Projection (illustrative):** the latest record is extended with exponential growth. The central doubling time is measured from the leader's records in the shown period; the band uses the historical range of 3.5 to 7.0 months. It is a what-if extrapolation, not a forecast.
+        * **Limits:** METR $T_{50}$ is reliable only up to about 16 hours; above it values are censored. METR data is no longer updated, so the series ends at its last measurement.
+        * **Epoch Capabilities Index (ECI):** a composite capability score built from many benchmarks, in index points rather than hours. It keeps updating after the METR series stopped, so it shows the current leader. Models whose confidence intervals overlap cannot be ranked reliably.
         """)
     else:
-        st.markdown(f"""
-        **Горизонт автономності моделі-лідера:**
-        * **Горизонт:** довжина завдання (у годинах роботи експерта-людини), яке модель виконує із заданою надійністю: 50% ($T_{{50}}$) або 80% ($T_{{80}}$). Це головний вимір автономності моделі.
-        * **Лінія лідера:** поточний максимум горизонту за датами релізу. Підписані точки це моделі, що встановили новий рекорд; напівпрозорі точки це інші виміряні моделі.
-        * **Джерела (окремо):** METR через Epoch AI, CC BY 4.0 (програмні та дослідницько-інженерні завдання), UK AISI (кібер-завдання) і, як допоміжний сигнал, Redwood Research (міркування без ланцюжка думок). Різні бенчмарки й рівні надійності ніколи не зшиваються в одну криву.
-        * **Логарифмічна шкала:** вертикальна вісь логарифмічна, тому стабільне експоненційне зростання виглядає прямою лінією. Час подвоєння рахується між першим і останнім рекордом кожного ряду.
-        * **Стеля вимірювань:** METR $T_{{50}}$ надійний лише приблизно до **{INSTRUMENT_CEILING_H:.0f} годин**; вище значення цензуровані, реальний горизонт може бути більшим. Дані METR більше не оновлюються, тому цей ряд закінчується на останньому вимірі.
-        * **Epoch Capabilities Index (ECI):** складений показник здатності за багатьма бенчмарками, в пунктах індексу, а не в годинах. Він продовжує оновлюватися після того, як ряд горизонтів METR зупинився, тож показує поточного лідера. Моделі з перекритими довірчими інтервалами не можна впевнено ранжувати.
+        st.markdown(r"""
+        **Автономність моделі-лідера: відстань до еталона**
+        * **Вимірювання (чуже):** 50%-горизонт $T_{50}$ від METR (через Epoch AI, CC BY 4.0): довжина програмного завдання в хвилинах роботи експерта-людини, яке модель виконує у 50% спроб. Ці числа беруться як опубліковані.
+        * **Інтерпретація (наша):** горизонт переводиться у шкалу довжини гілки
+
+        $$SAI_T = \frac{\log_{10}(1 + T_{\min})}{\log_{10}(124\,800)} \times 100\%$$
+
+        де $124\,800$ хв = 1 людино-рік (2 080 год) це еталон. 100% означає модель, що автономно виконує завдання обсягом в одну людино-рік роботи. Це шкала довжини завдання, а не момент втрати контролю.
+        * **Лінія лідера:** поточний максимум за датами релізу. Підписані точки це моделі, що встановили новий рекорд; напівпрозорі це інші виміряні моделі. Вус показує довірчий інтервал останнього рекорду.
+        * **Проєкція (ілюстративна):** останній рекорд продовжується експоненційним зростанням. Центральний час подвоєння вимірюється за рекордами лідера в показаному періоді; смуга використовує історичний діапазон 3,5-7,0 місяця. Це екстраполяція «що буде, якщо», а не прогноз.
+        * **Межі:** METR $T_{50}$ надійний лише приблизно до 16 годин; вище значення цензуровані. Дані METR більше не оновлюються, тому ряд закінчується на останньому вимірі.
+        * **Epoch Capabilities Index (ECI):** складений показник здатності за багатьма бенчмарками, в пунктах індексу, а не в годинах. Він продовжує оновлюватися після того, як ряд METR зупинився, тож показує поточного лідера. Моделі з перекритими довірчими інтервалами не можна впевнено ранжувати.
         """)
 
 with st.expander(L["circle_method_expander"]):
