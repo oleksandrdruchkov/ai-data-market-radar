@@ -32,6 +32,11 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 
+# Повтори при 429/503 (спільні IP GitHub Actions часто впираються в ліміт ArXiv)
+ARXIV_MAX_RETRIES = 4
+ARXIV_BACKOFF_BASE_SEC = 30
+ARXIV_MAX_WAIT_SEC = 300
+
 # Каскадний список моделей за пріоритетом квот та доступності
 MODEL_CASCADE = [
     "gemini-3.5-flash-lite",  # Високі квоти (1500 RPD) — базова робоча модель
@@ -40,8 +45,37 @@ MODEL_CASCADE = [
 ]
 
 
+def _get_with_retry(url: str, params: dict, headers: dict) -> requests.Response:
+    """GET із експоненційною паузою на 429/503; поважає заголовок Retry-After."""
+    for attempt in range(1, ARXIV_MAX_RETRIES + 1):
+        response = requests.get(url, params=params, headers=headers, timeout=25)
+
+        if response.status_code in (429, 503):
+            if attempt == ARXIV_MAX_RETRIES:
+                response.raise_for_status()
+
+            retry_after = response.headers.get("Retry-After", "").strip()
+            if retry_after.isdigit():
+                wait = int(retry_after)
+            else:
+                wait = ARXIV_BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+            wait = min(wait, ARXIV_MAX_WAIT_SEC)
+
+            logging.warning(
+                f"ArXiv повернув {response.status_code} (спроба {attempt}/{ARXIV_MAX_RETRIES}). "
+                f"Чекаю {wait} с перед повтором..."
+            )
+            time.sleep(wait)
+            continue
+
+        response.raise_for_status()
+        return response
+
+    raise RuntimeError("Недосяжна гілка: цикл повторів завершився без відповіді.")
+
+
 def fetch_arxiv_papers(max_results: int = 5):
-    """Отримує останні статті з ArXiv із захистом від блокування 406."""
+    """Отримує останні статті з ArXiv із захистом від блокування 406 та лімітів 429."""
     params = {
         "search_query": "cat:cs.AI OR cat:cs.CL OR cat:cs.LG",
         "sortBy": "submittedDate",
@@ -52,8 +86,7 @@ def fetch_arxiv_papers(max_results: int = 5):
         "User-Agent": "MarketRadarBot/1.0 (https://github.com/oleksandrdruchkov/ai-data-market-radar; contact@marketradar.local)",
         "Accept": "application/atom+xml,application/xml,text/xml",
     }
-    response = requests.get(ARXIV_API_URL, params=params, headers=headers, timeout=25)
-    response.raise_for_status()
+    response = _get_with_retry(ARXIV_API_URL, params, headers)
 
     root = ET.fromstring(response.content)
     ns = {"atom": "http://www.w3.org/2005/Atom"}
