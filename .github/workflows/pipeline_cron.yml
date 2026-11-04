@@ -52,8 +52,8 @@ jobs:
           python fetch_benchmarks.py
 
       - name: Collect Autonomy Horizons (METR)
-        # Збій цього кроку не повинен зупиняти решту щоденного пайплайна
-        continue-on-error: true
+        # Збій показується червоним, але решта кроків усе одно виконується
+        if: ${{ !cancelled() }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -61,6 +61,7 @@ jobs:
           python collector_horizons.py
 
       - name: Run ArXiv Research Signals Pipeline
+        if: ${{ !cancelled() }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -69,6 +70,7 @@ jobs:
           python collector_arxiv.py
 
       - name: Evaluate AI Risk Profiles (Monte Carlo)
+        if: ${{ !cancelled() }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -76,6 +78,7 @@ jobs:
           python evaluate_risks.py
 
       - name: Ingest Action Circle Telemetry
+        if: ${{ !cancelled() }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
