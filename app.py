@@ -1004,14 +1004,16 @@ else:
         values=[out_share, 1 - out_share],
         marker=dict(colors=[OUT_COLOR, IN_COLOR], line=dict(color="#ffffff", width=1)),
         sort=False, direction="clockwise", rotation=0,
-        texttemplate="%{label}<br>%{percent:.2%}", textposition="outside",
+        # малий сегмент - підпис зовні, великий - всередині, щоб нічого не обрізалось
+        texttemplate="%{label}<br>%{percent:.2%}", textposition=["outside", "inside"],
+        insidetextfont=dict(color="#0f172a", size=11), outsidetextfont=dict(color="#dc2626", size=11),
         hovertext=["<br>".join(out_lines), "<br>".join(in_lines)],
         hovertemplate="%{hovertext}<extra></extra>",
         showlegend=False,
     ))
     fig_circ.update_layout(
-        height=320, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        margin=dict(l=20, r=20, t=20, b=20),
+        height=340, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        margin=dict(l=20, r=20, t=50, b=20),
         font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI"),
         hoverlabel=dict(bgcolor="#ffffff", font_size=11, align="left"),
     )
