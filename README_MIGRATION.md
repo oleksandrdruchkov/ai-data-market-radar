@@ -10,6 +10,10 @@ sql/001_core_framework.sql              обов'язкова міграція
 sql/002_rls_new_tables.sql              рекомендовано (захист нових таблиць)
 sql/003_flag_synthetic_benchmarks.sql   ваше рішення (позначити вигадані горизонти)
 sql/004_autonomy_horizons.sql           горизонти METR / ECI на каркасі + показники autonomy_t50_frontier, sai_t_frontier
+sql/005_leader_actions.sql              коло дій моделей-лідерів (лише дані реальної роботи)
+sql/006_system_cards_auto.sql           автоматичний збір системних карток і автопідтвердження
+collectors/system_cards.py              збирач карток Anthropic / OpenAI
+collectors/_card_verify.py              механічна перевірка (цитати, числа, друга модель) - без моделі
 metrics/autonomy.py                     розрахунок показників у fct_metric_values
 tests/                                  тести каркаса
 ```

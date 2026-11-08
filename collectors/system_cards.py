@@ -1,0 +1,346 @@
+"""
+collectors/system_cards.py
+Системні картки моделей-лідерів -> fct_leader_action_rates (коло «у межах / поза межами»).
+
+Що робить щодня:
+  1. переглядає покажчики карток Anthropic і OpenAI, бере нові (ще не оброблені) документи;
+  2. завантажує документ (PDF або HTML), відбирає сторінки про дії в реальній роботі;
+  3. модель A витягує записи: модель, метод (лише реальна робота), кількості, цитати, сторінки;
+  4. модель B (інша) витягує те саме незалежно - «друга думка»;
+  5. код перевіряє кожен запис (collectors/_card_verify.py) і підтверджує автоматично
+     лише те, що пройшло всі умови; решта чекає на людину й на коло не потрапляє.
+Записи, які людина вже підтвердила вручну, збирач не перезаписує.
+
+Змінні: CARDS_SINCE=2026-01-01   CARDS_MAX_PER_RUN=3   CARDS_SECOND_MODEL (за замовчуванням друга в каскаді)
+Запуск: python -m collectors.system_cards
+"""
+
+from __future__ import annotations
+
+import io
+import os
+import re
+from datetime import date
+from html.parser import HTMLParser
+from typing import Literal
+from urllib.parse import urljoin
+
+import requests
+from pydantic import BaseModel, Field
+
+from core import BaseCollector, RawItem, Skip
+from core.db import iso, utcnow
+from collectors._card_verify import check_record, match_second_opinion
+
+HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
+PROMPT_VERSION = "card_actions_v1"
+
+INDEXES = [
+    {"lab": "Anthropic", "url": "https://www.anthropic.com/system-cards",
+     "link": r"https://www-cdn\.anthropic\.com/[^\"' ]+\.pdf"},
+    {"lab": "OpenAI", "url": "https://deploymentsafety.openai.com/",
+     "link": r"^(?:https://deploymentsafety\.openai\.com)?/[a-z0-9-]+/?$", "title_must": "system card"},
+]
+
+KEYWORDS = [
+    "destructive", "reckless", "circumvent", "beyond the scope", "beyond the user", "beyond what the user",
+    "overeager", "over-eager", "overly agentic", "works around", "work around", "internal use",
+    "internal usage", "day-to-day", "deployment simulation", "real traffic", "severity 3", "severity-3",
+    "without authorization", "unauthorized", "not authorized", "credentials", "instruction",
+]
+MAX_PAGES, MAX_CHARS = 40, 150_000
+
+
+# ---------------- покажчики ----------------
+
+class _Links(HTMLParser):
+    """Посилання з текстом рядка/пункту, в якому вони стоять."""
+
+    def __init__(self):
+        super().__init__()
+        self.links: list[dict] = []
+        self._href, self._text, self._ctx = None, [], []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("tr", "li", "article"):
+            self._ctx = []
+        if tag == "a":
+            self._href, self._text = dict(attrs).get("href"), []
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._href:
+            self.links.append({"href": self._href, "text": " ".join(self._text).strip(),
+                               "context": " ".join(self._ctx).strip()})
+            self._href = None
+
+    def handle_data(self, data):
+        d = data.strip()
+        if not d:
+            return
+        self._ctx.append(d)
+        if self._href:
+            self._text.append(d)
+
+
+def discover(index: dict, html: str) -> list[dict]:
+    p = _Links()
+    p.feed(html)
+    seen, out = set(), []
+    for ln in p.links:
+        href = (ln["href"] or "").strip()
+        if not re.search(index["link"], href):
+            continue
+        title = ln["context"] or ln["text"]
+        if index.get("title_must") and index["title_must"] not in (ln["text"] + " " + ln["context"]).lower():
+            continue
+        url = urljoin(index["url"], href)
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append({"lab": index["lab"], "url": url, "title": title[:300]})
+    return out
+
+
+# ---------------- документ ----------------
+
+def http_get(url: str) -> requests.Response:
+    resp = requests.get(url, headers=HEADERS, timeout=120)
+    resp.raise_for_status()
+    return resp
+
+
+class _Text(HTMLParser):
+    SKIP = {"script", "style", "nav", "footer", "noscript"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts, self._skip = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self._skip += 1
+        if tag in ("p", "li", "tr", "h1", "h2", "h3", "h4", "br", "div", "td"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+
+def document_pages(content: bytes, content_type: str) -> dict[str, str]:
+    """{'номер сторінки': текст}. PDF - справжні сторінки; HTML - частини по ~4000 знаків."""
+    if "pdf" in content_type or content[:4] == b"%PDF":
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(content))
+        return {str(i + 1): (pg.extract_text() or "") for i, pg in enumerate(reader.pages)}
+    p = _Text()
+    p.feed(content.decode("utf-8", errors="replace"))
+    text = re.sub(r"\n\s*\n+", "\n", "".join(p.parts))
+    pages, buf, n = {}, [], 1
+    for line in text.split("\n"):
+        buf.append(line)
+        if sum(len(b) for b in buf) > 4000:
+            pages[str(n)] = "\n".join(buf); buf, n = [], n + 1
+    if buf:
+        pages[str(n)] = "\n".join(buf)
+    return pages
+
+
+def relevant_pages(pages: dict[str, str]) -> dict[str, str]:
+    scored = []
+    for k, t in pages.items():
+        low = t.lower()
+        hits = sum(low.count(w) for w in KEYWORDS)
+        if hits:
+            scored.append((hits, k))
+    keep = sorted([k for _, k in sorted(scored, reverse=True)[:MAX_PAGES]], key=lambda x: int(x))
+    out, total = {}, 0
+    for k in keep:
+        if total + len(pages[k]) > MAX_CHARS:
+            break
+        out[k] = pages[k]; total += len(pages[k])
+    return out
+
+
+# ---------------- схема відповіді моделі ----------------
+
+class CardItem(BaseModel):
+    category: str = Field(min_length=3, max_length=200)
+    is_action: bool                      # True - дія поза межами; False - неправдивий звіт тощо
+    n: int | None = Field(default=None, ge=0)
+    rate_percent: float | None = Field(default=None, ge=0, le=100)
+    page: str
+    quote: str = Field(min_length=10, max_length=600)
+
+
+class CardRecord(BaseModel):
+    model_name: str = Field(min_length=2, max_length=80)
+    method: Literal["internal_use_sample", "deployment_simulation"]
+    unit: Literal["use", "turn", "tool_call", "trajectory"]
+    n_total: int | None = Field(default=None, gt=0)
+    n_total_quote: str | None = None
+    n_total_page: str | None = None
+    classifier: str | None = Field(default=None, max_length=200)
+    section: str | None = Field(default=None, max_length=120)
+    items: list[CardItem] = Field(min_length=1, max_length=20)
+
+
+class CardExtraction(BaseModel):
+    document_date: str | None = None     # YYYY-MM-DD
+    records: list[CardRecord] = Field(default_factory=list, max_length=6)
+
+
+def build_prompt(lab: str, title: str, pages: dict[str, str]) -> str:
+    body = "\n\n".join(f"=== PAGE {k} ===\n{v}" for k, v in pages.items())
+    return f"""You read an AI developer's system card ({lab}: {title}). Extract ONLY measurements of how often
+the model takes actions BEYOND THE BOUNDS of its task in REAL usage.
+
+Allowed data (method):
+- "internal_use_sample": a sample of real, day-to-day use of the model (e.g. internal Claude Code use);
+- "deployment_simulation": re-generation of real user/agent traffic with the new model.
+NOT allowed - return nothing for them: constructed scenarios, red-teaming, honeypots, synthetic environments,
+"trap" tests built to provoke misbehavior, capability benchmarks.
+
+For each category of behavior in the allowed data, add an item:
+- is_action = true: an action the task did not provide for - bypassing/working around a block or restriction,
+  destructive actions, using credentials or permissions not granted, acting on resources the user did not name,
+  ignoring an explicit prohibition by DOING something.
+- is_action = false: false or unverified REPORTS about the work (claiming done/verified when not, guesses stated
+  as fact, invented details) - these are statements, not actions.
+- n = count, or rate_percent = percentage (as printed, e.g. 0.251 for "0.251%"). Only numbers printed in the TEXT;
+  if a number is only visible in a chart/figure, leave it null.
+- page = the page number shown in "=== PAGE k ===" where the quote is.
+- quote = an EXACT copy of a sentence/row from that page containing the number. Do not paraphrase.
+n_total = total number of uses/turns in the sample, with n_total_quote copied exactly and n_total_page.
+model_name = the evaluated model as named in the card. document_date = the card's publication date (YYYY-MM-DD).
+If there is no allowed data, return {{"document_date": ..., "records": []}}.
+
+Return strictly valid JSON for this schema:
+{{"document_date": "YYYY-MM-DD", "records": [{{"model_name": "...", "method": "internal_use_sample|deployment_simulation",
+ "unit": "use|turn|tool_call|trajectory", "n_total": 886, "n_total_quote": "...", "n_total_page": "37",
+ "classifier": "who classified the behaviors", "section": "2.3.3",
+ "items": [{{"category": "...", "is_action": true, "n": 9, "rate_percent": null, "page": "40", "quote": "..."}}]}}]}}
+
+{body}
+"""
+
+
+# ---------------- збирач ----------------
+
+class SystemCards(BaseCollector):
+    source = "system_cards"
+    fact_table = "fct_leader_action_rates"
+    id_column = ""
+    collection_method = "scrape"
+    tracks_presence = False
+    allow_empty = True
+    reprocess_limit = 3
+    collector_version = "1"
+
+    def fetch(self):
+        since = os.getenv("CARDS_SINCE", "2026-01-01")
+        max_new = int(os.getenv("CARDS_MAX_PER_RUN", "3"))
+        done = {r["url"] for r in self.db.select("ops_documents", "url")}
+        for idx in INDEXES:
+            try:
+                docs = discover(idx, http_get(idx["url"]).text)
+            except Exception as e:
+                docs = []
+                self.log.warning(f"Покажчик {idx['lab']} недоступний: {e}")
+            self.log.info(f"{idx['lab']}: у покажчику {len(docs)} документів")
+            if not docs:   # сторінка змінилась або недоступна - це треба бачити на табло стану
+                self.db.insert_alerts([{"source": self.source, "check_name": "index_empty", "severity": "warning",
+                                        "message": f"Покажчик карток {idx['lab']} не дав жодного документа: {idx['url']}"}])
+            new = [d for d in docs if d["url"] not in done][:max_new]   # покажчики йдуть від нових до старих
+            for d in new:
+                yield RawItem(external_id=d["url"], payload={**d, "since": since}, content_key=d["url"])
+
+    def _mark(self, d: dict, status: str, n: int = 0, note: str | None = None):
+        self.db.upsert("ops_documents", {"url": d["url"], "lab": d["lab"], "title": d.get("title"),
+                                         "status": status, "n_records": n, "note": note,
+                                         "processed_at": iso(utcnow())}, on_conflict="url")
+
+    def parse(self, raw: RawItem) -> dict | None:
+        d = raw.payload
+        resp = http_get(d["url"])
+        pages = document_pages(resp.content, resp.headers.get("content-type", ""))
+        rel = relevant_pages(pages)
+        if not rel:
+            self._mark(d, "no_relevant_pages"); raise Skip("немає сторінок про дії")
+
+        prompt = build_prompt(d["lab"], d.get("title", ""), rel)
+        first = self.llm.extract(prompt=prompt, schema=CardExtraction, prompt_name="card_actions",
+                                 prompt_version=PROMPT_VERSION, content_hash=raw.content_hash, temperature=0.0)
+        if first is None:
+            return None                                           # відкласти до наступного запуску
+        doc_date = (first.data.document_date or "")[:10]
+        if doc_date and doc_date < d.get("since", "2026-01-01"):
+            self._mark(d, "no_real_use_data", note=f"старий документ {doc_date}"); raise Skip("старий документ")
+        if not first.data.records:
+            self._mark(d, "no_real_use_data"); raise Skip("немає даних реальної роботи")
+
+        second_model = os.getenv("CARDS_SECOND_MODEL") or next(
+            (m for m in self.llm.models if m != first.model), None)
+        second = (self.llm.extract(prompt=prompt, schema=CardExtraction, prompt_name="card_actions",
+                                   prompt_version=PROMPT_VERSION, content_hash=raw.content_hash,
+                                   temperature=0.0, models=[second_model])
+                  if second_model else None)
+        other = [r.model_dump() for r in second.data.records] if second else []
+
+        rows = []
+        for rec in first.data.records:
+            r = rec.model_dump()
+            ok, log, rate, n_out = check_record(r, pages)
+            if second is None:
+                agree, why = False, "друга модель недоступна"
+            else:
+                agree, why = match_second_opinion(r, other)
+            log.append(why)
+            if rate is None:
+                rate = 0.0                                         # рядок лишиться непідтвердженим
+            auto = ok and agree
+            acts = [it for it in r["items"] if it["is_action"]]
+            rows.append({
+                "lab": d["lab"], "model_name": r["model_name"],
+                "release_date": doc_date or date.today().isoformat(),
+                "source_doc": d.get("title") or d["url"], "source_url": d["url"],
+                "section": r.get("section"), "page": ", ".join(sorted({it["page"] for it in acts})),
+                "method": r["method"], "unit": r["unit"], "classifier": r.get("classifier"),
+                "n_total": r.get("n_total"), "n_out": n_out, "rate_out": rate,
+                "counted": [{"category": it["category"], "n": it["n"],
+                             "rate": (it["rate_percent"] / 100 if it["rate_percent"] is not None else None),
+                             "page": it["page"], "quote": it["quote"]} for it in acts],
+                "excluded": [{"category": it["category"], "n": it["n"], "page": it["page"],
+                              "why": "неправдивий звіт, не дія"} for it in r["items"] if not it["is_action"]],
+                "evidence_quote": r.get("n_total_quote"),
+                "data_origin": "primary_text",
+                "verified": auto, "verified_by": "auto" if auto else None,
+                "verified_at": iso(utcnow()) if auto else None,
+                "verification_log": log,
+                "extraction_method": f"{first.method} + {second.method if second else '—'}",
+                "notes": None if auto else "Автоматична перевірка не пройдена - див. verification_log.",
+            })
+        return {"_rows": rows, "extraction_method": first.method, "prompt_version": PROMPT_VERSION}
+
+    def save(self, fact: dict, raw: RawItem, raw_id: int) -> None:
+        rows = fact["_rows"]
+        human = {(r["lab"], r["model_name"], r["source_doc"], r["method"])
+                 for r in self.db.select(self.fact_table, "lab,model_name,source_doc,method",
+                                         eq={"verified_by": "human"})}
+        keep = [dict(r, raw_item_id=raw_id) for r in rows
+                if (r["lab"], r["model_name"], r["source_doc"], r["method"]) not in human]
+        if keep:
+            self.db.upsert(self.fact_table, keep, on_conflict="lab,model_name,source_doc,method")
+        pending = sum(1 for r in keep if not r["verified"])
+        if pending:
+            self.db.insert_alerts([{"source": self.source, "check_name": "pending_human_review", "severity": "info",
+                                    "message": f"{pending} запис(и) з {raw.payload['url']} не пройшли автоперевірку"}])
+        self._mark(raw.payload, "done", len(keep))
+
+
+if __name__ == "__main__":
+    SystemCards().run()

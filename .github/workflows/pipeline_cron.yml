@@ -38,7 +38,7 @@ jobs:
 
       - name: Unit tests (без бази)
         run: |
-          pip install pytest
+          pip install pytest reportlab
           python -m pytest -q tests
 
       # ---------- Збирачі на новому каркасі (core/) ----------
@@ -62,6 +62,10 @@ jobs:
       - name: Autonomy horizons + ECI (METR via Epoch)
         if: ${{ !cancelled() }}
         run: python -m collectors.epoch_horizons
+
+      - name: System cards - leaders' actions beyond bounds (auto-verified)
+        if: ${{ !cancelled() }}
+        run: python -m collectors.system_cards
 
       # ---------- Показники ----------
 
