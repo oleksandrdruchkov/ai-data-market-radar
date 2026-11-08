@@ -4,8 +4,8 @@ metrics/autonomy.py
 
   autonomy_t50_frontier  найбільший METR T50 серед моделей, випущених до кінця місяця (години),
                          з межами довірчого інтервалу саме тієї моделі-рекордсменки;
-  sai_t_frontier         SAI_T = 100 * log10(1 + T50_хв) / log10(124 800), % від еталона
-                         «1 людино-рік = 2 080 год»; та сама формула, що на табло (app.py).
+  sai_t_frontier         SAI_T, % від еталона «1 людино-рік = 2 080 год».
+                         Формула і стеля - у core/scales.py (спільні з табло app.py).
 
 Чесність ряду:
   * рахуються лише справжні виміри (source='METR', is_synthetic = false);
@@ -25,19 +25,21 @@ import logging
 from datetime import date
 
 from core.db import Db
+from core.scales import INSTRUMENT_CEILING_H, beyond_ceiling
+from core.scales import sai_t as _sai_t
 
 log = logging.getLogger("radar.metrics.autonomy")
 
 RUN_LABEL = "metrics_autonomy"
 METHOD_VERSION = "v1"
-REFERENCE_MIN = 124_800.0          # 1 людино-рік = 2 080 год
-INSTRUMENT_CEILING_H = 16.0        # стеля набору задач METR
 
 
 def sai_t(hours: float | None) -> float | None:
+    """Формула - у core/scales.py; тут лише округлення для запису в базу."""
     if hours is None:
         return None
-    return round(100.0 * math.log10(1.0 + hours * 60.0) / math.log10(REFERENCE_MIN), 3)
+    v = _sai_t(hours)
+    return None if math.isnan(v) else round(v, 3)
 
 
 def month_start(d: date) -> date:
@@ -79,7 +81,7 @@ def build_rows(measurements: list[dict]) -> list[dict]:
         _, v, lo, hi, _model = best
         lo = float(lo) if lo is not None else None
         hi = float(hi) if hi is not None else None
-        est = v > INSTRUMENT_CEILING_H
+        est = beyond_ceiling(v)
         base = {"period_start": ms.isoformat(), "period_end": me.isoformat(), "region": "GLOBAL",
                 "is_estimate": est, "method_version": METHOD_VERSION}
         rows.append({**base, "metric_id": "autonomy_t50_frontier", "value": round(v, 4),
