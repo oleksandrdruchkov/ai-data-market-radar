@@ -59,11 +59,17 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m collectors.arxiv
 
-      # ---------- Ще не перенесені ----------
-
-      - name: Collect Autonomy Horizons (METR via Epoch)
+      - name: Autonomy horizons + ECI (METR via Epoch)
         if: ${{ !cancelled() }}
-        run: python collector_horizons.py
+        run: python -m collectors.epoch_horizons
+
+      # ---------- Показники ----------
+
+      - name: Metrics - autonomy (T50 frontier, SAI_T)
+        if: ${{ !cancelled() }}
+        run: python -m metrics.autonomy
+
+      # ---------- Ще не перенесені ----------
 
       - name: Ingest Action Circle Telemetry
         if: ${{ !cancelled() }}
