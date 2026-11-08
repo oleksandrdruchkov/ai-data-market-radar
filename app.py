@@ -479,9 +479,9 @@ else:
 # ==========================================
 # ЧАСОВИЙ ГРАФІК: АВТОНОМНІСТЬ МОДЕЛІ-ЛІДЕРА У ШКАЛІ SAI_T
 # ==========================================
-INSTRUMENT_CEILING_H = 16.0            # стеля METR T50
-REFERENCE_MIN = 124800.0               # еталон: 1 людино-рік = 2 080 год
-REFERENCE_H = REFERENCE_MIN / 60.0
+# Формула SAI_T, еталон і стеля METR визначені в одному місці - core/scales.py
+# (той самий модуль рахує щоденні значення в fct_metric_values).
+from core.scales import sai_t, hours_at_sai_t, beyond_ceiling, INSTRUMENT_CEILING_H, REFERENCE_H
 DOUBLING_RANGE_MONTHS = (3.5, 7.0)     # історичний діапазон подвоєння спроможностей
 PROJECTION_MAX_YEARS = 6
 DAYS_PER_MONTH = 30.4375
@@ -516,11 +516,6 @@ def hex_to_rgba(color, alpha):
     c = color.lstrip("#")
     r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r},{g},{b},{alpha})"
-
-def sai_t(hours):
-    """SAI_T у відсотках: 100 * log10(1 + T_хв) / log10(124 800). 100% = еталон 1 людино-рік."""
-    t_min = np.asarray(hours, dtype=float) * 60.0
-    return 100.0 * np.log10(1.0 + t_min) / np.log10(REFERENCE_MIN)
 
 def project_sai(t0_hours, doubling_months, months):
     """SAI_T при експоненційному зростанні горизонту; обрізається на 100% (еталон)."""
@@ -628,16 +623,24 @@ else:
             label_from = max(0, n_rec - 5)
             rec_text = [short_name(n) if (sid == primary_sid and i >= label_from) else "" for i, n in enumerate(recs["model_name"])]
             rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
+            # точки понад стелю набору задач METR - оцінка, а не надійний вимір:
+            # малюємо порожнім кружечком і пишемо це в підказці
+            is_metr = sid.startswith("METR|")
+            est = [is_metr and beyond_ceiling(v) for v in recs["value_hours"]]
+            est_note = ("<br><i>estimate: above the METR task ceiling (16 h)</i>" if is_en
+                        else "<br><i>оцінка: понад стелю задач METR (16 год)</i>")
             fig_tl.add_trace(go.Scatter(
                 x=recs["release_date"], y=sai_t(recs["value_hours"]),
                 mode="markers+text",
-                marker=dict(size=9, color=color),
+                marker=dict(size=[11 if e else 9 for e in est], color=color,
+                            symbol=["circle-open" if e else "circle" for e in est],
+                            line=dict(width=2, color=color)),
                 text=rec_text,
                 textposition=rec_pos,
                 textfont=dict(size=9, color="#0f172a"),
                 hovertext=recs["model_name"],
-                customdata=recs["value_hours"],
-                hovertemplate="%{hovertext}<br>%{customdata:.2f} h · SAI_T %{y:.0f}%<extra>" + name + "</extra>",
+                customdata=[[float(v), est_note if e else ""] for v, e in zip(recs["value_hours"], est)],
+                hovertemplate="%{hovertext}<br>%{customdata[0]:.2f} h · SAI_T %{y:.0f}%%{customdata[1]}<extra>" + name + "</extra>",
                 showlegend=False
             ))
 
@@ -683,7 +686,7 @@ else:
         # ---- проєкція напрямку до еталона (ілюстративна екстраполяція) ----
         x_end = x_max + pd.Timedelta(days=200)
         proj_caption = None
-        T_cross = (REFERENCE_MIN - 1.0) / 60.0      # горизонт, де SAI_T = 100%
+        T_cross = hours_at_sai_t(100.0)              # горизонт, де SAI_T = 100%
         if show_proj and primary and primary["T0"] < T_cross:
             T0, t0, color = primary["T0"], primary["t0"], primary["color"]
             d_c = primary["dbl"] if primary["dbl"] else float(np.sqrt(DOUBLING_RANGE_MONTHS[0] * DOUBLING_RANGE_MONTHS[1]))
@@ -808,6 +811,14 @@ else:
                 if is_en else
                 f"**Поточний SAI_T лідера ({primary['model']}):** {cur_txt}, горизонт {fmt_hours(primary['T0'])} год."
             )
+            if primary["name"] == series_label("METR|T50") and beyond_ceiling(primary["T0"]):
+                st.caption(
+                    "○ Empty circle = estimate: the value is above the longest METR tasks (16 h), "
+                    "where the instrument no longer measures reliably."
+                    if is_en else
+                    "○ Порожній кружечок = оцінка: значення вище за найдовші задачі METR (16 год), "
+                    "де інструмент уже не вимірює надійно."
+                )
         for n in notes:
             st.caption(n)
         if proj_caption:
