@@ -169,6 +169,13 @@ def test_second_opinion():
     assert not match_second_opinion(GOOD_RECORD, [])[0]
 
 
+def test_any_unit_is_accepted():
+    rec = sc.CardRecord.model_validate({**GOOD_RECORD, "unit": "Completion"})
+    assert rec.unit == "turn"
+    assert sc.CardRecord.model_validate({**GOOD_RECORD, "unit": "task"}).unit == "task"
+    assert sc.CardRecord.model_validate({**GOOD_RECORD, "unit": "agent episode"}).unit == "agent_episode"
+
+
 def test_normalize():
     assert normalize("“Works around” a ﬁle-\nsystem") == '"works around" a filesystem'
 
@@ -184,7 +191,7 @@ def db():
     for f in ["tests/sql/legacy_schema.sql", "tests/sql/horizons_schema.sql", "sql/001_core_framework.sql",
               "sql/004_autonomy_horizons.sql", "sql/005_leader_actions.sql", "sql/006_system_cards_auto.sql",
               "sql/007_leader_by_eci.sql", "sql/008_cards_reprocess.sql", "sql/009_cards_queue_and_keys.sql",
-              "sql/009_cards_queue_and_keys.sql"]:
+              "sql/009_cards_queue_and_keys.sql", "sql/010_units_free.sql", "sql/010_units_free.sql"]:
         subprocess.run(["psql", *dbargs, "-v", "ON_ERROR_STOP=1", "-q", "-f", str(ROOT / f)],
                        check=True, capture_output=True)
     return PgDb(dbargs)
@@ -211,7 +218,8 @@ def test_collector_end_to_end(db, monkeypatch):
 
     monkeypatch.setattr(sc, "http_get", fake_get)
     monkeypatch.setenv("CARDS_MAX_PER_RUN", "1")
-    extraction = {"document_date": "2026-09-01", "records": [GOOD_RECORD, FIGURE_RECORD]}
+    extraction = {"document_date": "2026-09-01",
+                  "records": [dict(GOOD_RECORD, unit="task"), FIGURE_RECORD]}       # «task» - теж годиться
     # людина раніше вручну підтвердила старий запис - збирач його не чіпає
     db.insert("fct_leader_action_rates", {
         "lab": "Anthropic", "model_name": "Claude Mythos 5", "release_date": "2026-06-09", "source_doc": "m5",

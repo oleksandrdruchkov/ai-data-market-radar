@@ -986,8 +986,12 @@ else:
                 f"найсильніша модель лабораторії за ECI: {m['lab_top_model']} ({float(top_eci):.1f}) - підтверджених даних ще немає")
                 + "</i>")
         for src in (m["sources"] or []):
-            cnt = (f"{src['n_out']} / {src['n_total']} " + ({"use": "uses", "turn": "turns"}.get(src["unit"], src["unit"]) if is_en
-                   else {"use": "використань", "turn": "кроків"}.get(src["unit"], src["unit"]))
+            units_en = {"use": "uses", "turn": "turns", "tool_call": "tool calls", "trajectory": "trajectories",
+                        "session": "sessions", "transcript": "transcripts", "task": "tasks", "conversation": "conversations"}
+            units_ua = {"use": "використань", "turn": "кроків", "tool_call": "викликів інструментів",
+                        "trajectory": "траєкторій", "session": "сесій", "transcript": "записів роботи",
+                        "task": "завдань", "conversation": "розмов"}
+            cnt = (f"{src['n_out']} / {src['n_total']} " + ((units_en if is_en else units_ua).get(src["unit"], src["unit"]))
                    if src.get("n_total") else ("number of actions not published" if is_en else "кількість дій не опублікована"))
             where = f"{src.get('section') or ''}" + ((f", p. {src['page']}" if is_en else f", стор. {src['page']}")
                                                        if src.get("page") else "")
