@@ -33,7 +33,8 @@ from core.db import iso, utcnow
 from collectors._card_verify import check_record, match_second_opinion
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
-PROMPT_VERSION = "card_actions_v1"
+PROMPT_VERSION = "card_actions_v2"
+PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v2"   # змінилась - документи переглядаються знову
 
 INDEXES = [
     {"lab": "Anthropic", "url": "https://www.anthropic.com/system-cards",
@@ -42,44 +43,52 @@ INDEXES = [
      "link": r"^(?:https://deploymentsafety\.openai\.com)?/[a-z0-9-]+/?$", "title_must": "system card"},
 ]
 
-KEYWORDS = [
-    "destructive", "reckless", "circumvent", "beyond the scope", "beyond the user", "beyond what the user",
-    "overeager", "over-eager", "overly agentic", "works around", "work around", "internal use",
-    "internal usage", "day-to-day", "deployment simulation", "real traffic", "severity 3", "severity-3",
-    "without authorization", "unauthorized", "not authorized", "credentials", "instruction",
-]
-MAX_PAGES, MAX_CHARS = 40, 150_000
+# Вага фрази: що специфічніша для «реальна робота + дії поза межами», то більша.
+# Загальні слова (instruction, credentials) не використовуються - вони є на кожній сторінці.
+KEYWORDS = {
+    "day-to-day": 5, "internal use": 5, "internal usage": 5, "internal deployment": 4,
+    "deployment simulation": 5, "real traffic": 4, "production traffic": 4, "resampl": 3,
+    "works around": 4, "work around": 3, "circumvent": 3, "beyond the scope": 4, "beyond the user": 4,
+    "beyond what the user": 4, "destructive": 2, "reckless": 2, "overeager": 2, "over-eager": 2,
+    "overly agentic": 3, "severity 3": 4, "severity-3": 4, "without authorization": 3,
+    "unauthorized": 2, "not authorized": 2, "transcripts": 1,
+}
+MAX_PAGES, MAX_CHARS = 60, 260_000
 
 
 # ---------------- покажчики ----------------
 
 class _Links(HTMLParser):
-    """Посилання з текстом рядка/пункту, в якому вони стоять."""
+    """Посилання разом із коротким текстом перед ним (назва моделі в рядку таблиці чи пункті списку)."""
+
+    BLOCKS = ("tr", "li", "article", "div", "p", "section", "h2", "h3")
 
     def __init__(self):
         super().__init__()
         self.links: list[dict] = []
-        self._href, self._text, self._ctx = None, [], []
+        self._href, self._text, self._recent = None, [], []
 
     def handle_starttag(self, tag, attrs):
         if tag in ("tr", "li", "article"):
-            self._ctx = []
+            self._recent = []
         if tag == "a":
             self._href, self._text = dict(attrs).get("href"), []
 
     def handle_endtag(self, tag):
         if tag == "a" and self._href:
+            context = " ".join(self._recent[-6:])[-160:]
             self.links.append({"href": self._href, "text": " ".join(self._text).strip(),
-                               "context": " ".join(self._ctx).strip()})
-            self._href = None
+                               "context": context.strip()})
+            self._href, self._recent = None, []
 
     def handle_data(self, data):
         d = data.strip()
         if not d:
             return
-        self._ctx.append(d)
         if self._href:
             self._text.append(d)
+        else:
+            self._recent.append(d)
 
 
 def discover(index: dict, html: str) -> list[dict]:
@@ -90,7 +99,7 @@ def discover(index: dict, html: str) -> list[dict]:
         href = (ln["href"] or "").strip()
         if not re.search(index["link"], href):
             continue
-        title = ln["context"] or ln["text"]
+        title = " ".join(x for x in (ln["context"], ln["text"]) if x).strip()
         if index.get("title_must") and index["title_must"] not in (ln["text"] + " " + ln["context"]).lower():
             continue
         url = urljoin(index["url"], href)
@@ -150,20 +159,35 @@ def document_pages(content: bytes, content_type: str) -> dict[str, str]:
     return pages
 
 
+# Фрази, що позначають саме дані реальної роботи. Сторінки з ними (і сусідні) беруться завжди й першими.
+ANCHORS = ("day-to-day", "internal use", "internal usage", "internal deployment", "deployment simulation",
+           "real traffic", "production traffic", "resampled", "resampling")
+
+
 def relevant_pages(pages: dict[str, str]) -> dict[str, str]:
-    scored = []
-    for k, t in pages.items():
+    """1) сторінки з фразами про реальну роботу і 5 наступних; 2) решта місця - сторінки про поведінку за вагою."""
+    def score(t: str) -> int:
         low = t.lower()
-        hits = sum(low.count(w) for w in KEYWORDS)
-        if hits:
-            scored.append((hits, k))
-    keep = sorted([k for _, k in sorted(scored, reverse=True)[:MAX_PAGES]], key=lambda x: int(x))
+        return sum(w * low.count(phrase) for phrase, w in KEYWORDS.items())
+
+    nums = sorted(int(k) for k in pages)
+    anchors = [n for n in nums if any(a in pages[str(n)].lower() for a in ANCHORS)]
+    # розділ про реальну роботу триває кілька сторінок (у Mythos 5: стор. 37-42) - беремо вікно
+    window = {}
+    for n in anchors:
+        for m in range(n - 1, n + 6):
+            if str(m) in pages:
+                window.setdefault(m, abs(m - n))
+    first = sorted(window, key=lambda m: (window[m], -score(pages[str(m)])))
+    rest = sorted((n for n in nums if n not in first and score(pages[str(n)]) > 0),
+                  key=lambda n: -score(pages[str(n)]))
     out, total = {}, 0
-    for k in keep:
-        if total + len(pages[k]) > MAX_CHARS:
-            break
-        out[k] = pages[k]; total += len(pages[k])
-    return out
+    for n in first + rest:
+        t = pages[str(n)]
+        if len(out) >= MAX_PAGES or total + len(t) > MAX_CHARS:
+            continue
+        out[str(n)] = t; total += len(t)
+    return dict(sorted(out.items(), key=lambda kv: int(kv[0])))
 
 
 # ---------------- схема відповіді моделі ----------------
@@ -244,7 +268,8 @@ class SystemCards(BaseCollector):
     def fetch(self):
         since = os.getenv("CARDS_SINCE", "2026-01-01")
         max_new = int(os.getenv("CARDS_MAX_PER_RUN", "3"))
-        done = {r["url"] for r in self.db.select("ops_documents", "url")}
+        done = {r["url"] for r in self.db.select("ops_documents", "url",
+                                                   eq={"processed_version": PROCESSING_VERSION})}
         for idx in INDEXES:
             try:
                 docs = discover(idx, http_get(idx["url"]).text)
@@ -262,6 +287,7 @@ class SystemCards(BaseCollector):
     def _mark(self, d: dict, status: str, n: int = 0, note: str | None = None):
         self.db.upsert("ops_documents", {"url": d["url"], "lab": d["lab"], "title": d.get("title"),
                                          "status": status, "n_records": n, "note": note,
+                                         "processed_version": PROCESSING_VERSION,
                                          "processed_at": iso(utcnow())}, on_conflict="url")
 
     def parse(self, raw: RawItem) -> dict | None:
@@ -269,8 +295,9 @@ class SystemCards(BaseCollector):
         resp = http_get(d["url"])
         pages = document_pages(resp.content, resp.headers.get("content-type", ""))
         rel = relevant_pages(pages)
+        sent = f"сторінок у документі: {len(pages)}; передано моделі: {','.join(rel) or '—'}"
         if not rel:
-            self._mark(d, "no_relevant_pages"); raise Skip("немає сторінок про дії")
+            self._mark(d, "no_relevant_pages", note=sent); raise Skip("немає сторінок про дії")
 
         prompt = build_prompt(d["lab"], d.get("title", ""), rel)
         first = self.llm.extract(prompt=prompt, schema=CardExtraction, prompt_name="card_actions",
@@ -279,9 +306,10 @@ class SystemCards(BaseCollector):
             return None                                           # відкласти до наступного запуску
         doc_date = (first.data.document_date or "")[:10]
         if doc_date and doc_date < d.get("since", "2026-01-01"):
-            self._mark(d, "no_real_use_data", note=f"старий документ {doc_date}"); raise Skip("старий документ")
+            self._mark(d, "no_real_use_data", note=f"старий документ {doc_date}; {sent}"); raise Skip("старий документ")
         if not first.data.records:
-            self._mark(d, "no_real_use_data"); raise Skip("немає даних реальної роботи")
+            self._mark(d, "no_real_use_data", note=sent); raise Skip("немає даних реальної роботи")
+        self._sent_note = sent
 
         second_model = os.getenv("CARDS_SECOND_MODEL") or next(
             (m for m in self.llm.models if m != first.model), None)
@@ -339,7 +367,7 @@ class SystemCards(BaseCollector):
         if pending:
             self.db.insert_alerts([{"source": self.source, "check_name": "pending_human_review", "severity": "info",
                                     "message": f"{pending} запис(и) з {raw.payload['url']} не пройшли автоперевірку"}])
-        self._mark(raw.payload, "done", len(keep))
+        self._mark(raw.payload, "done", len(keep), note=getattr(self, "_sent_note", None))
 
 
 if __name__ == "__main__":
