@@ -308,3 +308,18 @@ def test_same_model_spelled_differently_is_one_row(db, monkeypatch):
     sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": extraction, "m2": extraction})).run()
     rows = db.select("fct_leader_action_rates", eq={"lab": "Anthropic"})
     assert len([r for r in rows if r["model_key"] == "claude mythos 5 1"]) == 1
+
+
+@needs_pg
+def test_queue_failure_does_not_fail_the_card(db, monkeypatch):
+    """Якщо база не приймає статус 'queued' (міграцію не запущено), картка все одно обробляється."""
+    db.sql("ALTER TABLE ops_documents DROP CONSTRAINT ops_documents_status_check; "
+           "ALTER TABLE ops_documents ADD CONSTRAINT ops_documents_status_check "
+           "CHECK (status IN ('done','no_relevant_pages','no_real_use_data','failed'))")
+    addendum = b'<html><body><p>See the <a href="/gpt-6-astra">GPT-6 Astra System Card</a>.</p></body></html>'
+    monkeypatch.setattr(sc, "http_get", lambda url: Resp(b"<html></html>", "text/html")
+                        if url == sc.INDEXES[0]["url"] else Resp(
+                            b'<li>Sep 29, 2026 <a href="/gpt-6-1-sol">GPT-6.1 Sol System Card</a></li>', "text/html")
+                        if url == sc.INDEXES[1]["url"] else Resp(addendum, "text/html"))
+    stats = sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": {"document_date": "2026-09-29", "records": []}})).run()
+    assert stats["failed"] == 0
