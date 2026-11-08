@@ -34,14 +34,17 @@ from collectors._card_verify import check_record, match_second_opinion
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
 PROMPT_VERSION = "card_actions_v2"
-PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3"   # змінилась - документи переглядаються знову
+PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3"   # discover v4: зміна пошуку не потребує повторної обробки   # змінилась - документи переглядаються знову
 
+# Картка = посилання, в тексті якого (або в рядку поруч) є «system card». Вигляд адреси не важливий:
+# нові картки Anthropic мають у назві файлу пробіли й «&» або лежать на інших адресах.
 INDEXES = [
     {"lab": "Anthropic", "url": "https://www.anthropic.com/system-cards",
-     "link": r"https://www-cdn\.anthropic\.com/[^\"' ]+\.pdf"},
+     "link": r".", "title_must": "system card"},
     {"lab": "OpenAI", "url": "https://deploymentsafety.openai.com/",
      "link": r"^(?:https://deploymentsafety\.openai\.com)?/[a-z0-9-]+/?$", "title_must": "system card"},
 ]
+_SKIP_HREF = ("#", "mailto:", "javascript:")
 
 # Вага фрази: що специфічніша для «реальна робота + дії поза межами», то більша.
 # Загальні слова (instruction, credentials) не використовуються - вони є на кожній сторінці.
@@ -120,16 +123,19 @@ def discover(index: dict, html: str) -> list[dict]:
     seen, out = set(), []
     for ln in p.links:
         href = (ln["href"] or "").strip()
-        if not re.search(index["link"], href):
+        if not href or href.startswith(_SKIP_HREF) or not re.search(index["link"], href):
             continue
-        title = " ".join(x for x in (ln["context"], ln["text"]) if x).strip()
-        if index.get("title_must") and index["title_must"] not in title.lower():
+        both = " ".join(x for x in (ln["context"], ln["text"]) if x).strip()
+        if index.get("title_must") and index["title_must"] not in both.lower():
             continue
         url = urljoin(index["url"], href)
-        if url in seen:
+        if url.rstrip("/") == index["url"].rstrip("/") or url in seen:
             continue
         seen.add(url)
-        out.append({"lab": index["lab"], "url": url, "title": title[:300], "listed_date": listed_date(title)})
+        text = ln["text"].strip()
+        # «GPT-6 Cyber System Card» - змістовна назва; «Read system card» - ні, тоді беремо рядок таблиці
+        title = text if len(text) > 18 and text.lower() not in ("read system card", "system card") else both
+        out.append({"lab": index["lab"], "url": url, "title": title[:300], "listed_date": listed_date(both)})
     return sorted(out, key=lambda d: d["listed_date"] or "0000", reverse=True)
 
 
