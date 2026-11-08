@@ -359,7 +359,10 @@ class SystemCards(BaseCollector):
         ctype = resp.headers.get("content-type", "")
         pages = document_pages(resp.content, ctype)
         if "html" in ctype:
-            self._queue_links(d, resp.content.decode("utf-8", errors="replace"))
+            try:    # черга - допоміжна річ: її збій не має зривати обробку самої картки
+                self._queue_links(d, resp.content.decode("utf-8", errors="replace"))
+            except Exception as e:
+                self.log.warning(f"Не вдалося поставити посилання в чергу ({d['url']}): {e}")
         rel = relevant_pages(pages)
         sent = f"сторінок у документі: {len(pages)}; передано моделі: {','.join(rel) or '—'}"
         if not rel:
