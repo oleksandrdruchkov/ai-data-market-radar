@@ -985,6 +985,14 @@ else:
                 out_lines.append(("&nbsp;&nbsp;<i>not counted (false reports, not actions): " if is_en
                                   else "&nbsp;&nbsp;<i>не враховано (неправдиві звіти, не дії): ")
                                  + "; ".join(excl) + "</i>")
+            vb = src.get("verified_by")
+            if vb:
+                out_lines.append("&nbsp;&nbsp;<i>" + (
+                    ("verified: automatically (quotes and numbers found in the source by code, second model agrees)"
+                     if vb == "auto" else "verified: by a person")
+                    if is_en else
+                    ("підтверджено: автоматично (код знайшов цитати й числа в джерелі, друга модель згодна)"
+                     if vb == "auto" else "підтверджено: людиною")) + "</i>")
             if src.get("classifier"):
                 out_lines.append(("&nbsp;&nbsp;<i>classified by: " if is_en else "&nbsp;&nbsp;<i>класифікував: ")
                                  + src["classifier"] + "</i>")

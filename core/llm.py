@@ -158,7 +158,11 @@ class Llm:
 
     def extract(self, *, prompt: str, schema: type[T], prompt_name: str,
                 prompt_version: str, content_hash: str,
-                temperature: float = 0.2) -> LlmResult[T] | None:
+                temperature: float = 0.2, models: list[str] | None = None) -> LlmResult[T] | None:
+        """models - власний порядок моделей (напр. для незалежної другої думки); інакше каскад."""
+        cascade = models or self.models
+        if models:   # друга думка кешується окремо від першої
+            prompt_name = f"{prompt_name}@{'+'.join(models)}"
         cached = self._cache_get(prompt_name, prompt_version, content_hash)
         if cached:
             try:
@@ -173,7 +177,7 @@ class Llm:
             self.stats.failures += 1
             return None
 
-        for idx, model in enumerate(self.models):
+        for idx, model in enumerate(cascade):
             if model in self._dead:
                 continue
             self._throttle()
