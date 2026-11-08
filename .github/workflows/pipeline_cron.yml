@@ -71,9 +71,13 @@ jobs:
 
       # ---------- Ще не перенесені ----------
 
-      - name: Ingest Action Circle Telemetry
-        if: ${{ !cancelled() }}
-        run: python collector_action_circle.py
+      # ВИМКНЕНО 2026-11-08: collector_action_circle.py рахував PR та issues людей-розробників
+      # як дії ШІ і підставляв мінімуми (max(15, ...)). Коло тепер будується з даних
+      # реальної роботи моделей-лідерів (sql/005_leader_actions.sql), які підтверджує людина.
+      #
+      # - name: Ingest Action Circle Telemetry
+      #   if: ${{ !cancelled() }}
+      #   run: python collector_action_circle.py
 
       # ВИМКНЕНО 2026-11-08: fetch_benchmarks.py обчислював T50/T80 і c_score формулою
       # від coding-балу й писав їх у fct_metr_horizons як справжні виміри METR

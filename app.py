@@ -226,34 +226,21 @@ def load_capability_data():
         return pd.DataFrame(), str(ex)[:300]
 
 @st.cache_data(ttl=120)
-def load_circle_data():
+def load_leader_actions():
+    """Коло дій моделей-лідерів: усі розрахунки - у SQL-представленнях (sql/005_leader_actions.sql).
+    Повертає (команда, моделі, записи на підтвердженні, текст помилки)."""
     try:
-        res = supabase.table("fct_action_circle_monthly")\
-            .select("*")\
-            .order("period", desc=True)\
-            .execute()
-        df = pd.DataFrame(res.data)
-        if df.empty:
-            return pd.DataFrame()
-
-        if "source_type" in df.columns:
-            df["priority"] = df["source_type"].apply(
-                lambda x: 2 if str(x).strip() == "Frontier System Card Audit" else 1
-            )
-            df = df.sort_values(by=["period", "priority"], ascending=[False, False])
-            df = df.drop_duplicates(subset=["period"], keep="first").reset_index(drop=True)
-        else:
-            df["source_type"] = "live_telemetry"
-            df["source_reference"] = "AI Incident Database & Inspect Evals"
-
-        return df
-    except Exception:
-        return pd.DataFrame()
+        team = pd.DataFrame(supabase.table("v_leader_action_circle").select("*").execute().data)
+        models = pd.DataFrame(supabase.table("v_leader_action_models").select("*").execute().data)
+        pending = pd.DataFrame(supabase.table("v_leader_action_pending").select("*").execute().data)
+        return team, models, pending, None
+    except Exception as ex:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), str(ex)[:300]
 
 df_skills_base, df_arxiv, df_health = load_data()
 df_hor, hor_error = load_horizon_data()
 df_eci, eci_error = load_capability_data()
-df_circ_raw = load_circle_data()
+df_lead_team, df_lead_models, df_lead_pending, lead_error = load_leader_actions()
 
 # ==========================================
 # ШАПКА: СЕЛЕКТОР МОВИ ТА РЕГІОНІВ
@@ -293,9 +280,9 @@ L = {
     "time_6_9": "~6–9 Months" if is_en else "~6–9 місяців",
     "horizon_title": "🤖 Leader Autonomy: Distance to the Reference" if is_en else "🤖 Автономність лідера: відстань до еталона",
     "capability_title": "📈 General Capability of the Leading Model (Epoch ECI)" if is_en else "📈 Загальна здатність моделі-лідера (Epoch ECI)",
-    "circle_title": "🎯 Control vs Autonomy of AI Actions" if is_en else "🎯 Контроль і автономність дій ШІ",
+    "circle_title": "🎯 Leading models' actions: within and beyond bounds" if is_en else "🎯 Дії моделей-лідерів: у межах і поза межами",
     "method_expander": "ℹ️ Methodology: Autonomy Horizon Chart" if is_en else "ℹ️ Методологія: графік горизонту автономності",
-    "circle_method_expander": "📐 Methodology: Control vs Autonomy Action Circle" if is_en else "📐 Методологія розрахунку: Контроль та автономність дій ШІ"
+    "circle_method_expander": "📐 Methodology: actions of leading models beyond bounds" if is_en else "📐 Методологія: дії моделей-лідерів поза межами"
 }
 
 with col_reg:
@@ -942,117 +929,107 @@ else:
         )
 
 # ==========================================
-# КОЛО КОНТРОЛЮ / АВТОНОМНОСТІ ДІЙ ШІ
+# КОЛО ДІЙ МОДЕЛЕЙ-ЛІДЕРІВ: У МЕЖАХ / ПОЗА МЕЖАМИ
+# Дані реальної роботи (не тести-пастки), лише підтверджені людиною.
+# Усі розрахунки - у SQL (v_leader_action_*), тут лише показ.
 # ==========================================
-CIRCLE_SEGMENTS = {
-    "approved":       ("🟢 Full Control",        "🟢 Full Control",              "#15803d"),
-    "oversight":      ("🟩 Перегляд",             "🟩 Revision",                  "#86efac"),
-    "auto_in_bounds": ("🟡 Автономно в межах",   "🟡 Autonomous within bounds",  "#f59e0b"),
-    "out_of_bounds":  ("🔴 Поза межами",          "🔴 Out of bounds",              "#dc2626"),
-}
+OUT_COLOR, IN_COLOR = "#dc2626", "#cbd5e1"
+
+def _pct(x, digits=2):
+    return "—" if x is None or pd.isna(x) else f"{100 * float(x):.{digits}f}%"
+
+def _method_label(m):
+    labels = {
+        "internal_use_sample": ("sample of real internal use", "вибірка реального внутрішнього використання"),
+        "deployment_simulation": ("re-generation of real traffic", "перегенерація реального трафіку"),
+    }
+    en, ua = labels.get(m, (m, m))
+    return en if is_en else ua
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['circle_title']}</div>", unsafe_allow_html=True)
 
-df_circ = df_circ_raw.copy()
-circ_keys = list(CIRCLE_SEGMENTS.keys())
+if lead_error:
+    st.caption(f"⚠️ v_leader_action_*: {lead_error}")
+elif df_lead_team.empty:
+    st.info("No verified data yet." if is_en else "Підтверджених даних ще немає.")
+else:
+    team = df_lead_team.iloc[0]
+    out_share = float(team["out_share"])
 
-is_demo = df_circ.empty
-if is_demo:
-    df_circ = pd.DataFrame([{
-        "period": "2026-10",
-        "approved": 25,
-        "oversight": 45,
-        "auto_in_bounds": 29,
-        "out_of_bounds": 1,
-        "source_type": "live_telemetry",
-        "source_reference": "Baseline Simulator"
-    }])
-    st.caption("⚠️ " + ("Using simulation baseline (Syncing live audit logs...)" if is_en else "Використовуються базові метрики (Синхронізація логів аудиту...)"))
+    # --- спливаюче вікно «поза межами»: з чого складається сегмент
+    out_lines = [
+        (f"<b>Beyond bounds: {_pct(out_share)}</b> (mean of {int(team['n_models'])} leading models, equal weight)"
+         if is_en else
+         f"<b>Поза межами: {_pct(out_share)}</b> (середнє {int(team['n_models'])} моделей-лідерів, рівна вага)"),
+        (f"range across models: {_pct(team['out_min'])} … {_pct(team['out_max'])}" if is_en
+         else f"розкид між моделями: {_pct(team['out_min'])} … {_pct(team['out_max'])}"),
+        "",
+    ]
+    for _, m in df_lead_models.iterrows():
+        ci = (f" [{_pct(m['ci_low'])}–{_pct(m['ci_high'])}]"
+              if pd.notna(m.get("ci_low")) and pd.notna(m.get("ci_high")) else "")
+        out_lines.append(f"<b>{m['lab']} · {m['model_name']}</b>: {_pct(m['rate_out'])}{ci}")
+        for src in (m["sources"] or []):
+            cnt = (f"{src['n_out']} / {src['n_total']} " + ({"use": "uses", "turn": "turns"}.get(src["unit"], src["unit"]) if is_en
+                   else {"use": "використань", "turn": "кроків"}.get(src["unit"], src["unit"]))
+                   if src.get("n_total") else ("number of actions not published" if is_en else "кількість дій не опублікована"))
+            where = f"{src.get('section') or ''}" + ((f", p. {src['page']}" if is_en else f", стор. {src['page']}")
+                                                       if src.get("page") else "")
+            out_lines.append(f"&nbsp;&nbsp;{_method_label(src['method'])}; {cnt}; {where}")
+            for c in (src.get("counted") or []):
+                val = f"{c['n']}" if c.get("n") is not None else _pct(c.get("rate"), 3)
+                out_lines.append(f"&nbsp;&nbsp;+ {c['category']}: {val}")
+            excl = [e["category"] for e in (src.get("excluded") or [])]
+            if excl:
+                out_lines.append(("&nbsp;&nbsp;<i>not counted (false reports, not actions): " if is_en
+                                  else "&nbsp;&nbsp;<i>не враховано (неправдиві звіти, не дії): ")
+                                 + "; ".join(excl) + "</i>")
+            if src.get("classifier"):
+                out_lines.append(("&nbsp;&nbsp;<i>classified by: " if is_en else "&nbsp;&nbsp;<i>класифікував: ")
+                                 + src["classifier"] + "</i>")
+    in_lines = [
+        (f"<b>No out-of-bounds action: {_pct(1 - out_share)}</b>" if is_en
+         else f"<b>Без виходу за межі: {_pct(1 - out_share)}</b>"),
+        ("Completed, refused, asked a human, or was stopped by a monitor." if is_en
+         else "Виконала, відмовилась, запитала людину або її зупинив монітор."),
+        ("The sources do not separate these cases, so they are not split." if is_en
+         else "Джерела ці випадки не розрізняють, тому сегмент не ділиться."),
+    ]
 
-for k in circ_keys:
-    if k not in df_circ.columns:
-        df_circ[k] = 0
-    df_circ[k] = pd.to_numeric(df_circ[k], errors="coerce").fillna(0)
+    labels = (["Beyond bounds", "No out-of-bounds action"] if is_en
+              else ["Поза межами", "Без виходу за межі"])
+    fig_circ = go.Figure(go.Pie(
+        labels=labels,
+        values=[out_share, 1 - out_share],
+        marker=dict(colors=[OUT_COLOR, IN_COLOR], line=dict(color="#ffffff", width=1)),
+        sort=False, direction="clockwise", rotation=0,
+        texttemplate="%{label}<br>%{percent:.2%}", textposition="outside",
+        hovertext=["<br>".join(out_lines), "<br>".join(in_lines)],
+        hovertemplate="%{hovertext}<extra></extra>",
+        showlegend=False,
+    ))
+    fig_circ.update_layout(
+        height=320, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        margin=dict(l=20, r=20, t=20, b=20),
+        font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI"),
+        hoverlabel=dict(bgcolor="#ffffff", font_size=11, align="left"),
+    )
+    st.plotly_chart(fig_circ, use_container_width=True, theme=None, config={'displayModeBar': False})
 
-circ_periods = sorted(df_circ["period"].astype(str).unique().tolist(), reverse=True)
-selected_p = st.selectbox("Period", circ_periods, index=0, label_visibility="collapsed")
+    st.caption(
+        (f"**Team:** {team['team']}. Real-use data published by the developers; trap tests are not used. "
+         "Actions were classified by the developers' model-based monitors. Hover over a segment for details.")
+        if is_en else
+        (f"**Команда:** {team['team']}. Дані реальної роботи, опубліковані розробниками; тести-пастки не використовуються. "
+         "Дії класифікували моделі-монітори розробників. Наведіть на сегмент, щоб побачити деталі.")
+    )
 
-matching_rows = df_circ[df_circ["period"].astype(str) == selected_p]
-if not matching_rows.empty:
-    circ_row = matching_rows.iloc[0]
-    lang_idx = 1 if is_en else 0
-    circ_labels = [CIRCLE_SEGMENTS[k][lang_idx] for k in circ_keys]
-    circ_values = [int(circ_row[k]) for k in circ_keys]
-    circ_colors = {CIRCLE_SEGMENTS[k][lang_idx]: CIRCLE_SEGMENTS[k][2] for k in circ_keys}
-    circ_total = sum(circ_values)
-
-    # Чистка значень від NaN
-    source_type_val = circ_row.get("source_type")
-    if pd.isna(source_type_val) or not str(source_type_val).strip() or str(source_type_val) == "nan":
-        source_type_val = "live_telemetry"
-    else:
-        source_type_val = str(source_type_val).strip()
-
-    source_ref_val = circ_row.get("source_reference")
-    if pd.isna(source_ref_val) or not str(source_ref_val).strip() or str(source_ref_val) == "nan":
-        source_ref_val = "AI Incident Database & Inspect Evals"
-    else:
-        source_ref_val = str(source_ref_val).strip()
-
-    if circ_total == 0:
-        st.caption("No data for this period." if is_en else "Немає даних за цей період.")
-    else:
-        fig_circ = px.pie(
-            names=circ_labels,
-            values=circ_values,
-            hole=0,
-            color=circ_labels,
-            color_discrete_map=circ_colors,
-        )
-        fig_circ.update_traces(
-            textinfo="percent+label",
-            textposition="outside",
-            automargin=True,
-            sort=False,
-            showlegend=False
-        )
-        fig_circ.update_layout(
-            height=300,
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            margin=dict(l=20, r=20, t=20, b=20),
-            font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI")
-        )
-        st.plotly_chart(fig_circ, use_container_width=True, theme=None, config={'displayModeBar': False})
-
-        red_share = (circ_values[3] / circ_total) * 100 if circ_total > 0 else 0
-        total_lbl = "Total actions" if is_en else "Всього дій"
-        skynet_lbl = "100% = Skynet" if is_en else "100% = «Скайнет»"
-        oob_lbl = "Out of bounds" if is_en else "Поза межами"
-        lower_bound_txt = (
-            "Lower bound: only verified incidents & container violations."
-            if is_en
-            else "Нижня межа: лише верифіковані інциденти та порушення ізоляції."
-        )
-
-        if source_type_val == "Frontier System Card Audit":
-            badge_title = "🛡️ Verified Benchmark:" if is_en else "🛡️ Верифіковано:"
-            badge_line = f"<span style='color:#0284c7; font-weight:700;'>{badge_title} Frontier System Card Audit</span> <span style='color:#475569;'>({source_ref_val})</span>"
-        else:
-            badge_title = "● Telemetry stream:" if is_en else "● Потік телеметрії:"
-            badge_line = f"<span style='color:#16a34a; font-weight:700;'>{badge_title}</span> <span style='color:#475569;'>{source_ref_val}</span>"
-
-        info_html = (
-            f"<div style='font-size:0.76rem; color:#64748b; line-height:1.5; margin-top:4px; padding-left:2px;'>"
-            f"<b>{total_lbl}:</b> {circ_total:,} &nbsp;|&nbsp; "
-            f"<b>{oob_lbl}:</b> <span style='color:#dc2626; font-weight:700;'>{red_share:.2f}%</span> "
-            f"<span style='color:#94a3b8;'>({skynet_lbl})</span><br>"
-            f"<div style='margin-top:2px; margin-bottom:2px;'>{badge_line}</div>"
-            f"<span style='color:#94a3b8;'>{lower_bound_txt}</span>"
-            f"</div>"
-        )
-        st.markdown(info_html, unsafe_allow_html=True)
+if not df_lead_pending.empty:
+    st.caption(
+        (f"⏳ {len(df_lead_pending)} record(s) awaiting human verification are not shown." if is_en
+         else f"⏳ {len(df_lead_pending)} запис(и) чекають на підтвердження людиною і на колі не показані.")
+    )
 
 # ==========================================
 # МЕТОДОЛОГІЯ: ГОРИЗОНТ АВТОНОМНОСТІ ТА ACTION CIRCLE
@@ -1089,68 +1066,28 @@ with st.expander(L["method_expander"]):
 
 with st.expander(L["circle_method_expander"]):
     if is_en:
-        st.markdown("""
-        ### 1. Mathematical Balance & 100% Boundary
-        The Action Circle visualizes the complete distribution of recorded AI agent behaviors across standardized benchmarks and audit registries:
+        st.markdown(r"""
+        **What the circle shows.** The share of actions of the leading models that go beyond the task: an action the task did not provide for (bypassing a block, a destructive action, using rights that were not granted).
 
-        $$N_{\\text{total}} = N_{\\text{approved}} + N_{\\text{oversight}} + N_{\\text{auto}} + N_{\\text{out}}$$
+        $$P_{out} = \frac{1}{M}\sum_{m=1}^{M} \frac{N_{out,m}}{N_{total,m}}$$
 
-        $$P_i = \\frac{N_i}{N_{\\text{total}}} \\times 100\\%$$
-
-        **Formula Explanation & Parameters:**
-        * **$N_{\\text{total}}$** — total volume of evaluated agent actions for the given month ($100\\%$ of the pie circle).
-        * **$P_i$** — calculated percentage share of each individual operational segment ($i$).
-        * **$N_{\\text{approved}}$ (🟢 Full Control):** actions requiring prior human confirmation (human-in-the-loop: merged PRs, authorized tool executions).
-        * **$N_{\\text{oversight}}$ (🟩 Revision):** autonomous agent actions submitted for human inspection and code review before release.
-        * **$N_{\\text{auto}}$ (🟡 Auto in bounds):** autonomous agent steps executed cleanly inside assigned tool scopes and container sandboxes.
-        * **$N_{\\text{out}}$ (🔴 Out of bounds):** verified container escapes, permission bypasses, or documented real-world systemic failures.
-
-        ---
-
-        ### 2. Operational Control Segments
-        * **🟢 Full Control (`approved`):** Direct human authorization for every major action.
-        * **🟩 Revision (`oversight`):** Autonomous work completed by the model that remains subject to human code audits and post-hoc verification.
-        * **🟡 Autonomous within bounds (`auto_in_bounds`):** Routine autonomous operations contained entirely within allowed execution limits.
-        * **🔴 Out of bounds (`out_of_bounds`):** Incidents where systems overrode permissions, attempted sandbox escapes, or caused verified disruptions.
-
-        ---
-
-        ### 3. Primary Data Registries & Verification
-        * **Frontier System Cards & Framework Audits:** Evaluated releases (Anthropic RSP ASL-3, OpenAI Preparedness, DeepMind FSF) take top priority when published, providing ground-truth verification of red-teaming anomalies and jailbreak bounds.
-        * **AI Incident Database (`incidentdatabase.ai`):** Public GraphQL API capturing verified real-world systemic failures and boundary violations.
-        * **SWE-bench Verified (`swe-bench/SWE-bench`):** Standard repository telemetry tracking pull request oversight and post-execution engineering audits.
-        * **UK AISI Inspect Platform (`UKGovernmentBEIS/inspect_ai`):** Linux/Docker execution logs documenting tool approvals and sandbox-isolated autonomous steps.
+        * **$M$** — number of leading models: the newest model of each lab with verified data; each model has equal weight.
+        * **$N_{out,m} / N_{total,m}$** — share of out-of-bounds actions of model $m$ in real-use data published by its developer (internal use, re-generation of real traffic).
+        * **Not used:** trap tests built to provoke violations; their construction cannot be checked from outside.
+        * **Not counted:** false reports about the work (claiming a task is done when it is not). These are not actions; they are shown in the hover text.
+        * **Verification:** a number appears only after a person has checked it against the page of the source.
+        * **Limits:** actions are classified by the developers' model-based monitors; samples are small (95% Wilson interval shown where counts are published).
         """)
     else:
-        st.markdown("""
-        ### 1. Математичний баланс та правило 100%
-        Кругова діаграма показує точний розподіл усіх зафіксованих дій ШІ-агентів у тестових середовищах та реєстрах аудиту у співвідношенні 1:1:
+        st.markdown(r"""
+        **Що показує коло.** Частку дій моделей-лідерів, що виходять за межі завдання: дія, не передбачена завданням (обхід блокування, руйнівна дія, використання прав, яких не надавали).
 
-        $$N_{\\text{total}} = N_{\\text{approved}} + N_{\\text{oversight}} + N_{\\text{auto}} + N_{\\text{out}}$$
+        $$P_{out} = \frac{1}{M}\sum_{m=1}^{M} \frac{N_{out,m}}{N_{total,m}}$$
 
-        $$P_i = \\frac{N_i}{N_{\\text{total}}} \\times 100\\%$$
-
-        **Пояснення змінних формули:**
-        * **$N_{\\text{total}}$** — загальна кількість зафіксованих дій агентів за звітний місяць, що становить повні $100\\%$ кругової діаграми.
-        * **$P_i$** — розрахована відсоткова частка відповідного сектора ($i$) на діаграмі.
-        * **$N_{\\text{approved}}$ (🟢 Full Control):** дії під прямим контролем людини (оператор особисто погодив виконання команди чи злив Pull Request).
-        * **$N_{\\text{oversight}}$ (🟩 Перегляд):** автономні дії моделі, передані людині на пост-фактум аудит, код-рев'ю та валідацію.
-        * **$N_{\\text{auto}}$ (🟡 Автономно в межах):** завдання, успішно закриті системою самостійно без виходу за дозволені рамки інструментів і пісочниці.
-        * **$N_{\\text{out}}$ (🔴 Поза межами):** верифіковані інциденти порушення рамок: спроби виходу з контейнера (sandbox escape), несанкціоновані системні виклики або зафіксовані збої.
-
-        ---
-
-        ### 2. Сегменти контролю дій
-        * **🟢 Full Control (`approved`):** Обов'язкове попереднє людське погодження дій (Human-in-the-loop).
-        * **🟩 Перегляд (`oversight`):** Автономні дії з подальшим обов'язковим аудитом та контролем результатів.
-        * **🟡 Автономно в межах (`auto_in_bounds`):** Безпечна автономна робота агента у межах лімітів і дозволеного стеку.
-        * **🔴 Поза межами (`out_of_bounds`):** Вихід з-під контролю або спроби порушення обмежень безпеки.
-
-        ---
-
-        ### 3. Первинні джерела та верифікація зрізів
-        * **Frontier System Cards & Framework Audits:** Офіційні звіти лабораторій (Anthropic RSP, OpenAI Preparedness, DeepMind FSF), що мають найвищий пріоритет під час релізів нових моделей та слугують базою калібрування червоного сектора.
-        * **AI Incident Database (`incidentdatabase.ai`):** Відкритий GraphQL API для фіксації підтверджених інцидентів порушення рамок безпеки.
-        * **SWE-bench Verified (`swe-bench/SWE-bench`):** Журнали виконання інженерних завдань і статусів аудиту Pull Requests.
-        * **UK AISI Inspect Platform (`UKGovernmentBEIS/inspect_ai`):** Логи виконання інструментальних викликів у захищених контейнерах Linux/Docker.
+        * **$M$** — кількість моделей-лідерів: найновіша модель кожної лабораторії з підтвердженими даними; кожна модель має рівну вагу.
+        * **$N_{out,m} / N_{total,m}$** — частка дій поза межами моделі $m$ у даних реальної роботи, опублікованих її розробником (внутрішнє використання, перегенерація реального трафіку).
+        * **Не використовуються:** тести-пастки, побудовані, щоб спровокувати порушення; їх побудову неможливо перевірити ззовні.
+        * **Не враховуються:** неправдиві звіти про роботу (модель каже, що завдання виконано, коли ні). Це не дії; вони показані у спливаючому вікні.
+        * **Підтвердження:** число з'являється на колі лише після того, як людина звірила його зі сторінкою джерела.
+        * **Межі:** дії класифікують моделі-монітори розробників; вибірки невеликі (де кількості опубліковано, показано 95% інтервал Вільсона).
         """)
