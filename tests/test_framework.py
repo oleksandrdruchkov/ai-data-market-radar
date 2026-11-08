@@ -217,6 +217,49 @@ def test_arxiv(db, monkeypatch):
     assert r["source_url"] == "http://arxiv.org/abs/2611.00003v1"
 
 
+FALLBACK_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+ <entry><id>http://arxiv.org/abs/2611.00002v1</id><published>2026-11-02T10:00:00Z</published>
+  <title>Paper B</title><summary>A real abstract about test-time compute scaling.</summary>
+  <arxiv:primary_category term="cs.LG"/></entry>
+ <entry><id>http://arxiv.org/api/errors#incorrect_id_format_for_bad</id><title>Error</title>
+  <summary>incorrect id format</summary></entry>
+</feed>"""
+
+
+@needs_pg
+def test_arxiv_reanalyze(db, monkeypatch):
+    import collectors.arxiv as ax
+    from collectors.arxiv_reanalyze import ArxivReanalyze
+    calls = []
+
+    class Resp:
+        status_code, content, headers = 200, FALLBACK_FEED, {}
+        def raise_for_status(self): pass
+
+    def fake_get(url, params=None, **k):
+        calls.append(params)
+        return Resp()
+
+    monkeypatch.setattr(ax.requests, "get", fake_get)
+    sig = {"predicted_skill": "Test-Time Compute", "predicted_role_en": "Inference Engineer",
+           "predicted_role_ua": "Інженер інференсу", "signal_summary_en": "Compute moves to inference time.",
+           "signal_summary_ua": "Обчислення переходять у час інференсу."}
+    stats = ArxivReanalyze(db=db, llm=ScriptedLlm(db, {"m1": sig})).run()
+    assert calls[0]["id_list"] == "2611.00002v1"
+    assert stats["seen"] == 1 and stats["failed"] == 0
+    r = db.select("fct_arxiv_signals", eq={"arxiv_id": "2611.00002v1"})[0]
+    assert r["extraction_method"] == "llm:m1" and r["predicted_skill"] == "Test-Time Compute"
+    assert r["first_seen_at"].startswith("2026-11-03")             # перша поява не змінилась
+    assert len(db.select("fct_arxiv_signals")) == 2                 # службовий «Error» не записано
+    assert db.select("ops_collector_runs", order="run_id", desc=True, limit=1)[0]["source"] == "arxiv_reanalyze"
+
+    # Повторний запуск: переаналізувати нічого, але це не помилка
+    stats = ArxivReanalyze(db=db, llm=ScriptedLlm(db, {"m1": sig})).run()
+    assert stats["seen"] == 0 and len(calls) == 1
+    assert not db.select("ops_quality_alerts", eq={"source": "arxiv_reanalyze", "severity": "critical"})
+
+
 def test_quality_rules():
     ev = quality.evaluate
     assert ev({"seen": 0}, "ok", None, [])[0]["check_name"] == "empty_fetch"

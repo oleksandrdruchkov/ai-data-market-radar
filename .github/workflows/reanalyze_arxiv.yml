@@ -1,0 +1,36 @@
+name: Reanalyze ArXiv (разово)
+
+# Ручний запуск: Actions -> Reanalyze ArXiv -> Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      method:
+        description: "Які записи переаналізувати (extraction_method)"
+        default: legacy_fallback
+        required: true
+      limit:
+        description: "Скільки максимум"
+        default: "50"
+        required: true
+
+jobs:
+  reanalyze:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      REANALYZE_METHOD: ${{ inputs.method }}
+      REANALYZE_LIMIT: ${{ inputs.limit }}
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Reanalyze
+        run: python -m collectors.arxiv_reanalyze

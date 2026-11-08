@@ -60,6 +60,8 @@ class BaseCollector:
     tracks_presence: bool = False     # чи закривати факти, яких немає в поточному fetch()
     collector_version: str = "1"
     reprocess_limit: int = 20         # скільки відкладених записів добирати за запуск
+    allow_empty: bool = False         # чи 0 записів із джерела - це нормально
+    run_label: str = ""               # назва в журналі запусків, якщо відрізняється від source
 
     def __init__(self, db: Db | None = None, llm: Llm | None = None):
         if not self.source or not self.fact_table:
@@ -129,7 +131,8 @@ class BaseCollector:
         started = utcnow()
         stats = {"seen": 0, "new": 0, "updated": 0, "failed": 0, "deferred": 0,
                  "reprocessed": 0, "closed": 0, "fetched": 0}
-        run_id = self.db.start_run(self.source, self.collector_version)
+        label = self.run_label or self.source
+        run_id = self.db.start_run(label, self.collector_version)
         fetch_error: str | None = None
         touched: set[int] = set()
 
@@ -179,7 +182,8 @@ class BaseCollector:
             status = "ok"
         self.db.finish_run(run_id, status, stats, fetch_error)
 
-        alerts = quality.run_checks(self.db, self.source, run_id, stats, status, fetch_error)
+        alerts = quality.run_checks(self.db, label, run_id, stats, status, fetch_error,
+                                    allow_empty=self.allow_empty)
         self.log.info(f"=== FINISH {self.source}: {status} | {stats} ===")
         if any(a["severity"] == "critical" for a in alerts) and quality.fail_on_critical():
             sys.exit(1)   # крок у GitHub Actions стане червоним
