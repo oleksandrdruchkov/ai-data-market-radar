@@ -28,7 +28,7 @@ def fail_on_critical() -> bool:
 
 
 def evaluate(stats: dict, status: str, fetch_error: str | None,
-             history_seen: list[int]) -> list[dict]:
+             history_seen: list[int], allow_empty: bool = False) -> list[dict]:
     """Чиста функція: лише рахує, нічого не пише. Легко тестувати."""
     alerts: list[dict] = []
 
@@ -42,7 +42,8 @@ def evaluate(stats: dict, status: str, fetch_error: str | None,
 
     seen = stats.get("seen", 0)
     if seen == 0:
-        add("empty_fetch", "critical", "Джерело повернуло 0 записів", 0, 1)
+        if not allow_empty:
+            add("empty_fetch", "critical", "Джерело повернуло 0 записів", 0, 1)
         return alerts
 
     failed_share = stats.get("failed", 0) / seen
@@ -72,7 +73,8 @@ def evaluate(stats: dict, status: str, fetch_error: str | None,
     return alerts
 
 
-def run_checks(db, source: str, run_id, stats: dict, status: str, fetch_error: str | None) -> list[dict]:
+def run_checks(db, source: str, run_id, stats: dict, status: str, fetch_error: str | None,
+               allow_empty: bool = False) -> list[dict]:
     try:
         history = [r for r in db.recent_runs(source, HISTORY_RUNS + 1)
                    if r.get("run_id") != run_id and r.get("status") in ("ok", "partial")]
@@ -81,7 +83,7 @@ def run_checks(db, source: str, run_id, stats: dict, status: str, fetch_error: s
         log.warning(f"Не вдалося прочитати історію запусків: {e}")
         history_seen = []
 
-    alerts = evaluate(stats, status, fetch_error, history_seen)
+    alerts = evaluate(stats, status, fetch_error, history_seen, allow_empty)
     for a in alerts:
         a.update(source=source, run_id=run_id)
         level = {"critical": logging.ERROR, "warning": logging.WARNING}.get(a["severity"], logging.INFO)
