@@ -9,6 +9,8 @@ collectors/seeds/deepseek_manual.json   3 вакансії DeepSeek, що ран
 sql/001_core_framework.sql              обов'язкова міграція
 sql/002_rls_new_tables.sql              рекомендовано (захист нових таблиць)
 sql/003_flag_synthetic_benchmarks.sql   ваше рішення (позначити вигадані горизонти)
+sql/004_autonomy_horizons.sql           горизонти METR / ECI на каркасі + показники autonomy_t50_frontier, sai_t_frontier
+metrics/autonomy.py                     розрахунок показників у fct_metric_values
 tests/                                  тести каркаса
 ```
 

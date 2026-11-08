@@ -49,12 +49,18 @@ class Deferred(Exception):
     """parse() може кинути це замість повернення None - ефект той самий."""
 
 
+class Skip(Exception):
+    """parse(): сирий запис оброблено, але факту з нього немає (наприклад, у моделі немає T80).
+    Не помилка і не відкладення."""
+
+
 class BaseCollector:
     # --- обов'язкові атрибути підкласу ---
     source: str = ""
     fact_table: str = ""
     # --- необов'язкові ---
-    id_column: str = "external_id"     # колонка зовнішнього ідентифікатора у таблиці фактів
+    id_column: str = "external_id"     # колонка зовнішнього ідентифікатора у таблиці фактів ("" - немає)
+    fact_source: str = ""              # значення колонки source у фактах, якщо відрізняється від source
     on_conflict: str = "external_id,source"
     collection_method: str = "api"     # api / scrape / file / manual_seed
     tracks_presence: bool = False     # чи закривати факти, яких немає в поточному fetch()
@@ -85,8 +91,9 @@ class BaseCollector:
 
     def _complete_fact(self, fact: dict, raw: RawItem, raw_id: int, seen_at: datetime) -> dict:
         fact = dict(fact)
-        fact.setdefault(self.id_column, raw.external_id)
-        fact["source"] = self.source
+        if self.id_column:
+            fact.setdefault(self.id_column, raw.external_id)
+        fact["source"] = self.fact_source or self.source
         fact.setdefault("collection_method", self.collection_method)
         fact["raw_item_id"] = raw_id
         fact["content_hash"] = raw.content_hash
@@ -108,6 +115,10 @@ class BaseCollector:
                 fact = self.parse(raw)
             except Deferred:
                 fact = None
+            except Skip:
+                self.db.set_raw_status(raw_id, "processed")
+                stats["skipped"] += 1
+                return "skipped"
             if fact is None:
                 self.db.set_raw_status(raw_id, "deferred")
                 stats["deferred"] += 1
@@ -129,7 +140,7 @@ class BaseCollector:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
         self.log.info(f"=== START {self.source} ===")
         started = utcnow()
-        stats = {"seen": 0, "new": 0, "updated": 0, "failed": 0, "deferred": 0,
+        stats = {"seen": 0, "new": 0, "updated": 0, "failed": 0, "deferred": 0, "skipped": 0,
                  "reprocessed": 0, "closed": 0, "fetched": 0}
         label = self.run_label or self.source
         run_id = self.db.start_run(label, self.collector_version)
@@ -169,7 +180,7 @@ class BaseCollector:
 
         # 3. Закриваємо зниклі - тільки якщо джерело відповіло і повернуло дані
         if self.tracks_presence and not fetch_error and stats["fetched"] > 0:
-            stats["closed"] = self.db.close_stale(self.fact_table, self.source, started)
+            stats["closed"] = self.db.close_stale(self.fact_table, self.fact_source or self.source, started)
 
         # 4. Журнал і якість
         llm = self.llm.stats
