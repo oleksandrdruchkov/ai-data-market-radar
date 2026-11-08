@@ -970,6 +970,21 @@ else:
         ci = (f" [{_pct(m['ci_low'])}–{_pct(m['ci_high'])}]"
               if pd.notna(m.get("ci_low")) and pd.notna(m.get("ci_high")) else "")
         out_lines.append(f"<b>{m['lab']} · {m['model_name']}</b>: {_pct(m['rate_out'])}{ci}")
+        # чому саме ця модель представляє лабораторію (вибір зроблено в SQL, тут лише показ)
+        if m.get("leader_basis") == "eci" and pd.notna(m.get("eci")):
+            basis = (f"leader by Epoch Capabilities Index: {float(m['eci']):.1f}" if is_en
+                     else f"лідер за індексом здатностей Epoch (ECI): {float(m['eci']):.1f}")
+        else:
+            basis = ("no ECI found - the newest model is used" if is_en
+                     else "ECI не знайдено - взято найновішу модель")
+        out_lines.append(f"&nbsp;&nbsp;<i>{basis}</i>")
+        top_eci = m.get("lab_top_eci")
+        if pd.notna(top_eci) and (pd.isna(m.get("eci")) or float(top_eci) > float(m["eci"]) + 1e-9):
+            out_lines.append("&nbsp;&nbsp;<i>" + (
+                f"strongest model of the lab by ECI: {m['lab_top_model']} ({float(top_eci):.1f}) - no verified data yet"
+                if is_en else
+                f"найсильніша модель лабораторії за ECI: {m['lab_top_model']} ({float(top_eci):.1f}) - підтверджених даних ще немає")
+                + "</i>")
         for src in (m["sources"] or []):
             cnt = (f"{src['n_out']} / {src['n_total']} " + ({"use": "uses", "turn": "turns"}.get(src["unit"], src["unit"]) if is_en
                    else {"use": "використань", "turn": "кроків"}.get(src["unit"], src["unit"]))
@@ -1081,7 +1096,7 @@ with st.expander(L["circle_method_expander"]):
 
         $$P_{out} = \frac{1}{M}\sum_{m=1}^{M} \frac{N_{out,m}}{N_{total,m}}$$
 
-        * **$M$** — number of leading models: the newest model of each lab with verified data; each model has equal weight.
+        * **$M$** — number of leading models: from each lab, the model with the highest Epoch Capabilities Index (ECI) among those with verified data; each model has equal weight. If the lab's strongest model has no data, the hover text says so.
         * **$N_{out,m} / N_{total,m}$** — share of out-of-bounds actions of model $m$ in real-use data published by its developer (internal use, re-generation of real traffic).
         * **Not used:** trap tests built to provoke violations; their construction cannot be checked from outside.
         * **Not counted:** false reports about the work (claiming a task is done when it is not). These are not actions; they are shown in the hover text.
@@ -1094,7 +1109,7 @@ with st.expander(L["circle_method_expander"]):
 
         $$P_{out} = \frac{1}{M}\sum_{m=1}^{M} \frac{N_{out,m}}{N_{total,m}}$$
 
-        * **$M$** — кількість моделей-лідерів: найновіша модель кожної лабораторії з підтвердженими даними; кожна модель має рівну вагу.
+        * **$M$** — кількість моделей-лідерів: від кожної лабораторії модель з найвищим індексом здатностей Epoch (ECI) серед тих, що мають підтверджені дані; кожна модель має рівну вагу. Якщо найсильніша модель лабораторії даних не має, це показано у спливаючому вікні.
         * **$N_{out,m} / N_{total,m}$** — частка дій поза межами моделі $m$ у даних реальної роботи, опублікованих її розробником (внутрішнє використання, перегенерація реального трафіку).
         * **Не використовуються:** тести-пастки, побудовані, щоб спровокувати порушення; їх побудову неможливо перевірити ззовні.
         * **Не враховуються:** неправдиві звіти про роботу (модель каже, що завдання виконано, коли ні). Це не дії; вони показані у спливаючому вікні.
