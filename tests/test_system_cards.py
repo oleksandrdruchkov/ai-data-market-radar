@@ -103,6 +103,22 @@ def test_real_use_section_not_crowded_out():
     assert "37" in rel and "40" in rel and "41" in rel     # сусідня сторінка теж (таблиця переходить)
 
 
+def test_listed_dates_and_order():
+    assert sc.listed_date("Oct 30, 2026 GPT-Rosalind-6 System Card") == "2026-10-30"
+    assert sc.listed_date("Claude Haiku 4.5 October 2025 Read system card") == "2025-10-01"
+    assert sc.listed_date("no date") is None
+    html = ('<table><tr><td>Claude Haiku 4.5</td><td>October 2025</td><td><a href="https://www-cdn.anthropic.com/h.pdf">Read system card</a></td></tr>'
+            '<tr><td>Claude Mythos 5.1</td><td>September 2026</td><td><a href="https://www-cdn.anthropic.com/m.pdf">Read system card</a></td></tr></table>')
+    assert [d["url"][-5:] for d in sc.discover(sc.INDEXES[0], html)] == ["m.pdf", "h.pdf"]
+
+
+def test_script_text_is_not_a_title():
+    html = ('<li><script>class X extends HTMLElement{attributeChangedCallback(){this.hydrate()}}</script>'
+            'Nov 05, 2026 <a href="/gpt-6-cyber">GPT-6 Cyber System Card</a></li>')
+    d = sc.discover(sc.INDEXES[1], html)[0]
+    assert "hydrate" not in d["title"] and d["title"].startswith("Nov 05, 2026")
+
+
 def test_titles_are_short_model_names():
     a = sc.discover(sc.INDEXES[0], "<html><body><h1>Model system cards</h1><p>System cards document the "
                     "capabilities, safety evaluations and more.</p>" + ANTHROPIC_INDEX[12:])
@@ -150,9 +166,10 @@ def db():
     subprocess.run(["psql", *base, "-c", "DROP DATABASE IF EXISTS radar_sc", "-c", "CREATE DATABASE radar_sc"],
                    check=True, capture_output=True)
     dbargs = ARGS + ["-d", "radar_sc"]
-    for f in ["tests/sql/legacy_schema.sql", "sql/001_core_framework.sql", "sql/005_leader_actions.sql",
-              "sql/006_system_cards_auto.sql", "sql/006_system_cards_auto.sql",
-              "sql/008_cards_reprocess.sql", "sql/008_cards_reprocess.sql"]:
+    for f in ["tests/sql/legacy_schema.sql", "tests/sql/horizons_schema.sql", "sql/001_core_framework.sql",
+              "sql/004_autonomy_horizons.sql", "sql/005_leader_actions.sql", "sql/006_system_cards_auto.sql",
+              "sql/007_leader_by_eci.sql", "sql/008_cards_reprocess.sql", "sql/009_cards_queue_and_keys.sql",
+              "sql/009_cards_queue_and_keys.sql"]:
         subprocess.run(["psql", *dbargs, "-v", "ON_ERROR_STOP=1", "-q", "-f", str(ROOT / f)],
                        check=True, capture_output=True)
     return PgDb(dbargs)
@@ -181,10 +198,16 @@ def test_collector_end_to_end(db, monkeypatch):
     monkeypatch.setenv("CARDS_MAX_PER_RUN", "1")
     extraction = {"document_date": "2026-09-01", "records": [GOOD_RECORD, FIGURE_RECORD]}
     # людина раніше вручну підтвердила старий запис - збирач його не чіпає
-    db.update("fct_leader_action_rates", {"verified": True, "verified_by": "human"}, eq={"lab": "Anthropic"})
+    db.insert("fct_leader_action_rates", {
+        "lab": "Anthropic", "model_name": "Claude Mythos 5", "release_date": "2026-06-09", "source_doc": "m5",
+        "source_url": "https://example/m5.pdf", "method": "internal_use_sample", "unit": "use",
+        "n_total": 886, "n_out": 13, "rate_out": 13 / 886, "verified": True, "verified_by": "human"})
 
     stats = sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": extraction, "m2": extraction})).run()
     assert stats["failed"] == 0 and stats["seen"] == 1
+    assert not any("Opus41" in u for u in calls)                             # стара картка не завантажувалась
+    old = db.select("ops_documents", eq={"url": "https://www-cdn.anthropic.com/old/Opus41.pdf"})[0]
+    assert old["status"] == "no_real_use_data" and "2025-08-01" in old["note"]
     rows = {(r["model_name"], r["method"]): r for r in db.select("fct_leader_action_rates")}
     good = rows[("Claude Mythos 5.1", "internal_use_sample")]
     assert good["verified"] is True and good["verified_by"] == "auto"
@@ -225,3 +248,48 @@ def test_collector_without_second_opinion_does_not_autoverify(db, monkeypatch):
     sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": extraction})).run()        # m2/m3 вичерпали квоту
     r = db.select("fct_leader_action_rates", eq={"model_name": "Claude Mythos 5.1"})[0]
     assert r["verified"] is False and any("друга модель" in l for l in r["verification_log"])
+
+
+@needs_pg
+def test_links_inside_cards_are_queued(db, monkeypatch):
+    """Основна картка GPT-6 є лише в посиланнях із доповнення - збирач її знаходить і обробляє наступного дня."""
+    addendum = (b'<html><body><h1>Addendum to GPT-6 Astra System Card: GPT-6.1 Sol</h1>'
+                b'<p>See the <a href="/gpt-6-astra">GPT-6 Astra System Card</a>.</p><p>Nothing else.</p></body></html>')
+    main_card = b'<html><body><h1>GPT-6 Astra System Card</h1><p>capabilities</p></body></html>'
+    calls = []
+
+    def fake_get(url):
+        calls.append(url)
+        if url == sc.INDEXES[0]["url"]:
+            return Resp(b"<html></html>", "text/html")
+        if url == sc.INDEXES[1]["url"]:
+            return Resp(b'<li>Sep 29, 2026 <a href="/gpt-6-1-sol">Addendum to GPT-6 Astra System Card: GPT-6.1 Sol</a></li>',
+                        "text/html")
+        if url.endswith("/gpt-6-1-sol"):
+            return Resp(addendum, "text/html")
+        return Resp(main_card, "text/html")
+
+    monkeypatch.setattr(sc, "http_get", fake_get)
+    empty = {"document_date": "2026-09-29", "records": []}
+    sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": empty})).run()
+    q = db.select("ops_documents", eq={"url": "https://deploymentsafety.openai.com/gpt-6-astra"})
+    assert q and q[0]["status"] == "queued"
+
+    calls.clear()
+    sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": empty})).run()
+    assert "https://deploymentsafety.openai.com/gpt-6-astra" in calls
+    assert db.select("ops_documents", eq={"url": "https://deploymentsafety.openai.com/gpt-6-astra"})[0]["status"] != "queued"
+
+
+@needs_pg
+def test_same_model_spelled_differently_is_one_row(db, monkeypatch):
+    pdf = make_pdf()
+    monkeypatch.setattr(sc, "http_get", lambda url: Resp(ANTHROPIC_INDEX.encode(), "text/html")
+                        if url == sc.INDEXES[0]["url"] else Resp(b"", "text/html") if url == sc.INDEXES[1]["url"]
+                        else Resp(pdf, "application/pdf"))
+    monkeypatch.setenv("CARDS_MAX_PER_RUN", "1")
+    dash = json.loads(json.dumps(GOOD_RECORD)); dash["model_name"] = "Claude-Mythos-5.1"
+    extraction = {"document_date": "2026-09-01", "records": [GOOD_RECORD, dash]}
+    sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": extraction, "m2": extraction})).run()
+    rows = db.select("fct_leader_action_rates", eq={"lab": "Anthropic"})
+    assert len([r for r in rows if r["model_key"] == "claude mythos 5 1"]) == 1

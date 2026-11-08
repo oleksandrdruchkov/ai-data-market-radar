@@ -34,7 +34,7 @@ from collectors._card_verify import check_record, match_second_opinion
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
 PROMPT_VERSION = "card_actions_v2"
-PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v2"   # змінилась - документи переглядаються знову
+PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3"   # змінилась - документи переглядаються знову
 
 INDEXES = [
     {"lab": "Anthropic", "url": "https://www.anthropic.com/system-cards",
@@ -68,13 +68,19 @@ class _Links(HTMLParser):
         self.links: list[dict] = []
         self._href, self._text, self._recent = None, [], []
 
+    SKIP = ("script", "style", "noscript", "template")
+
     def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self._skip = getattr(self, "_skip", 0) + 1
         if tag in ("tr", "li", "article"):
             self._recent = []
         if tag == "a":
             self._href, self._text = dict(attrs).get("href"), []
 
     def handle_endtag(self, tag):
+        if tag in self.SKIP and getattr(self, "_skip", 0):
+            self._skip -= 1
         if tag == "a" and self._href:
             context = " ".join(self._recent[-6:])[-160:]
             self.links.append({"href": self._href, "text": " ".join(self._text).strip(),
@@ -83,7 +89,7 @@ class _Links(HTMLParser):
 
     def handle_data(self, data):
         d = data.strip()
-        if not d:
+        if not d or getattr(self, "_skip", 0):
             return
         if self._href:
             self._text.append(d)
@@ -91,7 +97,24 @@ class _Links(HTMLParser):
             self._recent.append(d)
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def listed_date(text: str) -> str | None:
+    """'Oct 30, 2026' -> '2026-10-30'; 'September 2026' -> '2026-09-01'; інакше None."""
+    t = (text or "").lower()
+    m = re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),\s*(20\d\d)", t)
+    if m:
+        return f"{m.group(3)}-{_MONTHS[m.group(1)]:02d}-{int(m.group(2)):02d}"
+    m = re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(20\d\d)", t)
+    if m:
+        return f"{m.group(2)}-{_MONTHS[m.group(1)]:02d}-01"
+    return None
+
+
 def discover(index: dict, html: str) -> list[dict]:
+    """Документи з покажчика, від нових до старих (покажчики самі не завжди так відсортовані)."""
     p = _Links()
     p.feed(html)
     seen, out = set(), []
@@ -100,14 +123,28 @@ def discover(index: dict, html: str) -> list[dict]:
         if not re.search(index["link"], href):
             continue
         title = " ".join(x for x in (ln["context"], ln["text"]) if x).strip()
-        if index.get("title_must") and index["title_must"] not in (ln["text"] + " " + ln["context"]).lower():
+        if index.get("title_must") and index["title_must"] not in title.lower():
             continue
         url = urljoin(index["url"], href)
         if url in seen:
             continue
         seen.add(url)
-        out.append({"lab": index["lab"], "url": url, "title": title[:300]})
-    return out
+        out.append({"lab": index["lab"], "url": url, "title": title[:300], "listed_date": listed_date(title)})
+    return sorted(out, key=lambda d: d["listed_date"] or "0000", reverse=True)
+
+
+def linked_cards(index: dict, html: str, base_url: str) -> list[str]:
+    """Посилання на інші картки всередині картки (основна картка GPT-6 є лише в доповненнях)."""
+    p = _Links()
+    p.feed(html)
+    urls = []
+    for ln in p.links:
+        href = (ln["href"] or "").strip()
+        if re.search(index["link"], href) and "system card" in (ln["text"] + " " + ln["context"]).lower():
+            u = urljoin(base_url, href).rstrip("/")
+            if u != base_url.rstrip("/") and u not in urls:
+                urls.append(u)
+    return urls
 
 
 # ---------------- документ ----------------
@@ -268,8 +305,10 @@ class SystemCards(BaseCollector):
     def fetch(self):
         since = os.getenv("CARDS_SINCE", "2026-01-01")
         max_new = int(os.getenv("CARDS_MAX_PER_RUN", "3"))
-        done = {r["url"] for r in self.db.select("ops_documents", "url",
-                                                   eq={"processed_version": PROCESSING_VERSION})}
+        docs_tbl = self.db.select("ops_documents", "url,lab,title,status,processed_version,listed_date")
+        done = {r["url"] for r in docs_tbl if r["processed_version"] == PROCESSING_VERSION
+                and r["status"] != "queued"}
+        queued = [r for r in docs_tbl if r["status"] == "queued"]
         for idx in INDEXES:
             try:
                 docs = discover(idx, http_get(idx["url"]).text)
@@ -280,20 +319,47 @@ class SystemCards(BaseCollector):
             if not docs:   # сторінка змінилась або недоступна - це треба бачити на табло стану
                 self.db.insert_alerts([{"source": self.source, "check_name": "index_empty", "severity": "warning",
                                         "message": f"Покажчик карток {idx['lab']} не дав жодного документа: {idx['url']}"}])
-            new = [d for d in docs if d["url"] not in done][:max_new]   # покажчики йдуть від нових до старих
-            for d in new:
+            fresh = []
+            for d in docs:
+                if d["url"] in done:
+                    continue
+                if d["listed_date"] and d["listed_date"] < since:      # старі - навіть не завантажуємо
+                    self._mark(d, "no_real_use_data", note=f"старий документ за покажчиком ({d['listed_date']})")
+                    continue
+                fresh.append(d)
+            known = {d["url"] for d in fresh}
+            fresh += [{"lab": q["lab"], "url": q["url"], "title": q["title"], "listed_date": q["listed_date"]}
+                      for q in queued if q["lab"] == idx["lab"] and q["url"] not in known and q["url"] not in done]
+            for d in fresh[:max_new]:
                 yield RawItem(external_id=d["url"], payload={**d, "since": since}, content_key=d["url"])
 
     def _mark(self, d: dict, status: str, n: int = 0, note: str | None = None):
         self.db.upsert("ops_documents", {"url": d["url"], "lab": d["lab"], "title": d.get("title"),
+                                         "listed_date": d.get("listed_date"),
                                          "status": status, "n_records": n, "note": note,
                                          "processed_version": PROCESSING_VERSION,
                                          "processed_at": iso(utcnow())}, on_conflict="url")
 
+    def _queue_links(self, d: dict, html: str):
+        idx = next((i for i in INDEXES if i["lab"] == d["lab"]), None)
+        if not idx:
+            return
+        known = {r["url"] for r in self.db.select("ops_documents", "url")}
+        new = [u for u in linked_cards(idx, html, d["url"]) if u not in known]
+        for u in new:
+            self.db.upsert("ops_documents", {"url": u, "lab": d["lab"], "title": None, "status": "queued",
+                                             "note": f"знайдено в {d['url']}"}, on_conflict="url",
+                           ignore_duplicates=True)
+        if new:
+            self.log.info(f"У черзі нові картки з {d['url']}: {new}")
+
     def parse(self, raw: RawItem) -> dict | None:
         d = raw.payload
         resp = http_get(d["url"])
-        pages = document_pages(resp.content, resp.headers.get("content-type", ""))
+        ctype = resp.headers.get("content-type", "")
+        pages = document_pages(resp.content, ctype)
+        if "html" in ctype:
+            self._queue_links(d, resp.content.decode("utf-8", errors="replace"))
         rel = relevant_pages(pages)
         sent = f"сторінок у документі: {len(pages)}; передано моделі: {','.join(rel) or '—'}"
         if not rel:
@@ -356,18 +422,28 @@ class SystemCards(BaseCollector):
 
     def save(self, fact: dict, raw: RawItem, raw_id: int) -> None:
         rows = fact["_rows"]
-        human = {(r["lab"], r["model_name"], r["source_doc"], r["method"])
-                 for r in self.db.select(self.fact_table, "lab,model_name,source_doc,method",
+        human = {(r["lab"], r["model_key"], r["source_url"], r["method"])
+                 for r in self.db.select(self.fact_table, "lab,model_key,source_url,method",
                                          eq={"verified_by": "human"})}
-        keep = [dict(r, raw_item_id=raw_id) for r in rows
-                if (r["lab"], r["model_name"], r["source_doc"], r["method"]) not in human]
+        keep, seen = [], set()
+        for r in rows:
+            key = (r["lab"], model_key(r["model_name"]), r["source_url"], r["method"])
+            if key in human or key in seen:      # ручне підтвердження не перезаписуємо; дубль у відповіді - один
+                continue
+            seen.add(key)
+            keep.append(dict(r, raw_item_id=raw_id))
         if keep:
-            self.db.upsert(self.fact_table, keep, on_conflict="lab,model_name,source_doc,method")
+            self.db.upsert(self.fact_table, keep, on_conflict="lab,model_key,source_url,method")
         pending = sum(1 for r in keep if not r["verified"])
         if pending:
             self.db.insert_alerts([{"source": self.source, "check_name": "pending_human_review", "severity": "info",
                                     "message": f"{pending} запис(и) з {raw.payload['url']} не пройшли автоперевірку"}])
         self._mark(raw.payload, "done", len(keep), note=getattr(self, "_sent_note", None))
+
+
+def model_key(name: str) -> str:
+    """Той самий ключ, що й radar_model_key() у SQL: 'GPT-6-Cyber' -> 'gpt 6 cyber'."""
+    return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
 
 
 if __name__ == "__main__":
