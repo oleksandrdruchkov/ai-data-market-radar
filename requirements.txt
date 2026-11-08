@@ -4,3 +4,7 @@ plotly
 supabase
 requests
 google-genai
+pydantic>=2
+python-dotenv
+numpy
+scipy

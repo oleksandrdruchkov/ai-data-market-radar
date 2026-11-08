@@ -1,0 +1,23 @@
+[
+  {
+    "id": "ds-kernel-01",
+    "title": "大模型底层算子/CUDA优化专家",
+    "location": "Hangzhou, China / Beijing",
+    "company": "DeepSeek",
+    "description": "负责DeepSeek-V3/R1大规模分布式训练与推理的算子性能优化。精通CUDA、Triton、PTX底层汇编优化，深入理解DualPipe并行与MLA注意力机制内存压缩。熟练掌握PyTorch与C++，具备GPU显存瓶颈突破经验。"
+  },
+  {
+    "id": "ds-rl-02",
+    "title": "强化学习与推理算法研究员 (R1 Reasoning)",
+    "location": "Beijing, China",
+    "company": "DeepSeek",
+    "description": "专注于大语言模型大规模强化学习(RL)与Long CoT推理能力探索。深入研究GRPO算法、Pure RL探索机制与自我反思验证。熟练运用Python, PyTorch, vLLM/SGLang分布式环境，具备数学/代码竞赛解题数据合成经验。"
+  },
+  {
+    "id": "ds-infra-03",
+    "title": "分布式AI基础设施与存储工程师",
+    "location": "Hangzhou, China",
+    "company": "DeepSeek",
+    "description": "负责万卡集群高效存储与通信网络拓扑优化。熟练掌握RDMA, InfiniBand, Kubernetes, Docker, Ceph分布式文件系统，确保671B MoE模型训练时GPU利用率最大化。"
+  }
+]
