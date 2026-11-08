@@ -103,6 +103,21 @@ def test_real_use_section_not_crowded_out():
     assert "37" in rel and "40" in rel and "41" in rel     # сусідня сторінка теж (таблиця переходить)
 
 
+def test_new_style_anthropic_links_found():
+    """Нові картки: пробіли й «&» у назві файлу, інший хост або HTML-сторінка - усе це картки."""
+    html = ('<table>'
+            '<tr><td>Claude Opus 5.5</td><td>September 2026</td><td><a href="https://assets.anthropic.com/m/abc/Claude-Opus-5-5-System-Card.pdf">Read system card</a></td></tr>'
+            '<tr><td>Claude Fable 5 and Mythos 5</td><td>June 2026</td><td><a href="https://www-cdn.anthropic.com/57a/Claude Fable 5 & Claude Mythos 5 System Card.pdf">Read system card</a></td></tr>'
+            '<tr><td>Mythos Preview</td><td>April 2026</td><td><a href="/claude-mythos-preview-system-card">Read system card</a></td></tr>'
+            '<tr><td>Claude 2</td><td>July 2023</td><td><a href="https://www-cdn.anthropic.com/old/claude2.pdf">Read system card</a></td></tr>'
+            '</table><a href="/news">News</a><a href="#top">Top</a>')
+    docs = sc.discover(sc.INDEXES[0], html)
+    assert [d["listed_date"] for d in docs] == ["2026-09-01", "2026-06-01", "2026-04-01", "2023-07-01"]
+    assert docs[1]["url"].endswith("Claude Fable 5 & Claude Mythos 5 System Card.pdf")
+    assert docs[2]["url"] == "https://www.anthropic.com/claude-mythos-preview-system-card"
+    assert docs[0]["title"].startswith("Claude Opus 5.5")
+
+
 def test_listed_dates_and_order():
     assert sc.listed_date("Oct 30, 2026 GPT-Rosalind-6 System Card") == "2026-10-30"
     assert sc.listed_date("Claude Haiku 4.5 October 2025 Read system card") == "2025-10-01"
@@ -116,7 +131,7 @@ def test_script_text_is_not_a_title():
     html = ('<li><script>class X extends HTMLElement{attributeChangedCallback(){this.hydrate()}}</script>'
             'Nov 05, 2026 <a href="/gpt-6-cyber">GPT-6 Cyber System Card</a></li>')
     d = sc.discover(sc.INDEXES[1], html)[0]
-    assert "hydrate" not in d["title"] and d["title"].startswith("Nov 05, 2026")
+    assert d["title"] == "GPT-6 Cyber System Card" and d["listed_date"] == "2026-11-05"
 
 
 def test_titles_are_short_model_names():
