@@ -92,6 +92,23 @@ def test_pdf_pages_and_relevance(pdf_pages):
     assert {"37", "40", "41", "70"} <= set(rel) and "5" not in rel
 
 
+def test_real_use_section_not_crowded_out():
+    """Великий документ: на 200 сторінках трапляються «destructive»/«unauthorized», але розділ
+    про повсякденне використання все одно має потрапити до моделі."""
+    pages = {str(i): f"Page {i}: destructive capability evaluation, unauthorized access test. " * 3
+             for i in range(1, 251)}
+    pages["37"] = PAGE_37
+    pages["40"] = PAGE_40
+    rel = sc.relevant_pages(pages)
+    assert "37" in rel and "40" in rel and "41" in rel     # сусідня сторінка теж (таблиця переходить)
+
+
+def test_titles_are_short_model_names():
+    a = sc.discover(sc.INDEXES[0], "<html><body><h1>Model system cards</h1><p>System cards document the "
+                    "capabilities, safety evaluations and more.</p>" + ANTHROPIC_INDEX[12:])
+    assert a[0]["title"].startswith("Claude Mythos 5.1") and "System cards document" not in a[0]["title"]
+
+
 def test_good_record_passes(pdf_pages):
     ok, log, rate, n_out = check_record(GOOD_RECORD, pdf_pages)
     assert ok, log
@@ -134,7 +151,8 @@ def db():
                    check=True, capture_output=True)
     dbargs = ARGS + ["-d", "radar_sc"]
     for f in ["tests/sql/legacy_schema.sql", "sql/001_core_framework.sql", "sql/005_leader_actions.sql",
-              "sql/006_system_cards_auto.sql", "sql/006_system_cards_auto.sql"]:
+              "sql/006_system_cards_auto.sql", "sql/006_system_cards_auto.sql",
+              "sql/008_cards_reprocess.sql", "sql/008_cards_reprocess.sql"]:
         subprocess.run(["psql", *dbargs, "-v", "ON_ERROR_STOP=1", "-q", "-f", str(ROOT / f)],
                        check=True, capture_output=True)
     return PgDb(dbargs)
@@ -186,6 +204,14 @@ def test_collector_end_to_end(db, monkeypatch):
     calls.clear()
     sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": extraction, "m2": extraction})).run()
     assert not any(u.endswith(".pdf") and "Mythos51" in u for u in calls)
+    doc = db.select("ops_documents", eq={"url": "https://www-cdn.anthropic.com/abc/Mythos51.pdf"})[0]
+    assert "37" in doc["note"] and doc["processed_version"] == sc.PROCESSING_VERSION
+
+    # змінилась версія обробки - документ переглядається знову
+    db.update("ops_documents", {"processed_version": "старa"}, eq={"url": doc["url"]})
+    calls.clear()
+    sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": extraction, "m2": extraction})).run()
+    assert any("Mythos51" in u for u in calls)
 
 
 @needs_pg

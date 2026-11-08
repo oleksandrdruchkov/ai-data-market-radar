@@ -12,6 +12,8 @@ sql/003_flag_synthetic_benchmarks.sql   ваше рішення (позначи�
 sql/004_autonomy_horizons.sql           горизонти METR / ECI на каркасі + показники autonomy_t50_frontier, sai_t_frontier
 sql/005_leader_actions.sql              коло дій моделей-лідерів (лише дані реальної роботи)
 sql/006_system_cards_auto.sql           автоматичний збір системних карток і автопідтвердження
+sql/007_leader_by_eci.sql               лідер лабораторії = найвищий ECI
+sql/008_cards_reprocess.sql             повторна обробка карток після зміни збирача
 collectors/system_cards.py              збирач карток Anthropic / OpenAI
 collectors/_card_verify.py              механічна перевірка (цитати, числа, друга модель) - без моделі
 metrics/autonomy.py                     розрахунок показників у fct_metric_values
