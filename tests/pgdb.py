@@ -79,6 +79,10 @@ class PgDb(Db):
         where = " AND ".join(f"{k} = {_lit(v)}" for k, v in eq.items())
         return self._dml(f"UPDATE {table} SET {sets} WHERE {where} RETURNING *")
 
+    def delete(self, table, *, eq, is_null=()):
+        where = [f"{k} = {_lit(v)}" for k, v in eq.items()] + [f"{k} IS NULL" for k in is_null]
+        self.sql(f"DELETE FROM {table} WHERE " + " AND ".join(where))
+
     def delete_not_in(self, table, *, eq, column, keep):
         where = " AND ".join(f"{k} = {_lit(v)}" for k, v in eq.items())
         if keep:

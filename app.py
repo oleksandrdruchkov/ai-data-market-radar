@@ -999,10 +999,11 @@ else:
             for c in (src.get("counted") or []):
                 val = f"{c['n']}" if c.get("n") is not None else _pct(c.get("rate"), 3)
                 out_lines.append(f"&nbsp;&nbsp;+ {c['category']}: {val}")
-            excl = [e["category"] for e in (src.get("excluded") or [])]
+            excl = [f"{e['category']}" + (f" ({e['why']})" if e.get("why") and not is_en else "")
+                    for e in (src.get("excluded") or [])]
             if excl:
-                out_lines.append(("&nbsp;&nbsp;<i>not counted (false reports, not actions): " if is_en
-                                  else "&nbsp;&nbsp;<i>не враховано (неправдиві звіти, не дії): ")
+                out_lines.append(("&nbsp;&nbsp;<i>not counted (false reports or below the severity threshold): "
+                                  if is_en else "&nbsp;&nbsp;<i>не враховано: ")
                                  + "; ".join(excl) + "</i>")
             vb = src.get("verified_by")
             if vb:
@@ -1103,7 +1104,7 @@ with st.expander(L["circle_method_expander"]):
         * **$M$** — number of leading models: from each lab, the model with the highest Epoch Capabilities Index (ECI) among those with verified data; each model has equal weight. If the lab's strongest model has no data, the hover text says so.
         * **$N_{out,m} / N_{total,m}$** — share of out-of-bounds actions of model $m$ in real-use data published by its developer (internal use, re-generation of real traffic).
         * **Not used:** trap tests built to provoke violations; their construction cannot be checked from outside.
-        * **Not counted:** false reports about the work (claiming a task is done when it is not). These are not actions; they are shown in the hover text.
+        * **Not counted:** false reports about the work (claiming a task is done when it is not) - these are not actions. Where the developer grades actions by severity (OpenAI: 0-4), levels 3 and above are counted: actions the user would not expect and would strongly object to. All of this is shown in the hover text.
         * **Verification:** a number appears only after a person has checked it against the page of the source.
         * **Limits:** actions are classified by the developers' model-based monitors; samples are small (95% Wilson interval shown where counts are published).
         """)
@@ -1116,7 +1117,7 @@ with st.expander(L["circle_method_expander"]):
         * **$M$** — кількість моделей-лідерів: від кожної лабораторії модель з найвищим індексом здатностей Epoch (ECI) серед тих, що мають підтверджені дані; кожна модель має рівну вагу. Якщо найсильніша модель лабораторії даних не має, це показано у спливаючому вікні.
         * **$N_{out,m} / N_{total,m}$** — частка дій поза межами моделі $m$ у даних реальної роботи, опублікованих її розробником (внутрішнє використання, перегенерація реального трафіку).
         * **Не використовуються:** тести-пастки, побудовані, щоб спровокувати порушення; їх побудову неможливо перевірити ззовні.
-        * **Не враховуються:** неправдиві звіти про роботу (модель каже, що завдання виконано, коли ні). Це не дії; вони показані у спливаючому вікні.
+        * **Не враховуються:** неправдиві звіти про роботу (модель каже, що завдання виконано, коли ні) - це не дії. Якщо розробник оцінює дії за шкалою серйозності (OpenAI: 0-4), зараховуються рівні 3 і вище: дії, яких користувач не очікував і проти яких рішуче заперечив би. Усе це показано у спливаючому вікні.
         * **Підтвердження:** число з'являється на колі лише після того, як людина звірила його зі сторінкою джерела.
         * **Межі:** дії класифікують моделі-монітори розробників; вибірки невеликі (де кількості опубліковано, показано 95% інтервал Вільсона).
         """)

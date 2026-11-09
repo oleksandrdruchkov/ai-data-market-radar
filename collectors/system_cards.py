@@ -30,11 +30,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from core import BaseCollector, RawItem, Skip
 from core.db import iso, utcnow
-from collectors._card_verify import check_record, match_second_opinion
+from collectors._card_verify import check_record, counts_as_out, match_second_opinion
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
-PROMPT_VERSION = "card_actions_v2"
-PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3/units_v2"   # змінилась - документи переглядаються знову
+PROMPT_VERSION = "card_actions_v3"
+PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3/units_v2/verify_v3"   # змінилась - документи переглядаються знову
 
 # Картка = посилання, в тексті якого (або в рядку поруч) є «system card». Вигляд адреси не важливий:
 # нові картки Anthropic мають у назві файлу пробіли й «&» або лежать на інших адресах.
@@ -251,6 +251,7 @@ class CardItem(BaseModel):
     is_action: bool                      # True - дія поза межами; False - неправдивий звіт тощо
     n: int | None = Field(default=None, ge=0)
     rate_percent: float | None = Field(default=None, ge=0, le=100)
+    severity: int | None = Field(default=None, ge=0, le=4)   # рівень за шкалою картки, якщо вона є
     page: str
     quote: str = Field(min_length=10, max_length=600)
 
@@ -296,6 +297,9 @@ For each category of behavior in the allowed data, add an item:
   ignoring an explicit prohibition by DOING something.
 - is_action = false: false or unverified REPORTS about the work (claiming done/verified when not, guesses stated
   as fact, invented details) - these are statements, not actions.
+- If the card grades behaviors on a SEVERITY scale (e.g. 0-4), add ONE item per severity level (and per category
+  if given), with "severity" = that level. Never merge levels and never report "any severity" totals as one item.
+  If there is no severity scale, severity = null.
 - n = count, or rate_percent = percentage (as printed, e.g. 0.251 for "0.251%"). Only numbers printed in the TEXT;
   if a number is only visible in a chart/figure, leave it null.
 - page = the page number shown in "=== PAGE k ===" where the quote is.
@@ -308,7 +312,7 @@ Return strictly valid JSON for this schema:
 {{"document_date": "YYYY-MM-DD", "records": [{{"model_name": "...", "method": "internal_use_sample|deployment_simulation",
  "unit": "use|turn|tool_call|trajectory", "n_total": 886, "n_total_quote": "...", "n_total_page": "37",
  "classifier": "who classified the behaviors", "section": "2.3.3",
- "items": [{{"category": "...", "is_action": true, "n": 9, "rate_percent": null, "page": "40", "quote": "..."}}]}}]}}
+ "items": [{{"category": "...", "is_action": true, "severity": null, "n": 9, "rate_percent": null, "page": "40", "quote": "..."}}]}}]}}
 
 {body}
 """
@@ -404,27 +408,31 @@ class SystemCards(BaseCollector):
             self._mark(d, "no_real_use_data", note=sent); raise Skip("немає даних реальної роботи")
         self._sent_note = sent
 
-        second_model = os.getenv("CARDS_SECOND_MODEL") or next(
-            (m for m in self.llm.models if m != first.model), None)
-        second = (self.llm.extract(prompt=prompt, schema=CardExtraction, prompt_name="card_actions",
+        # друга думка: будь-яка ІНША модель каскаду (якщо одна вичерпала квоту - наступна)
+        others = ([os.getenv("CARDS_SECOND_MODEL")] if os.getenv("CARDS_SECOND_MODEL")
+                  else [m for m in self.llm.models if m != first.model])
+        second = (self.llm.extract(prompt=prompt, schema=CardExtraction, prompt_name="card_actions_2nd",
                                    prompt_version=PROMPT_VERSION, content_hash=raw.content_hash,
-                                   temperature=0.0, models=[second_model])
-                  if second_model else None)
+                                   temperature=0.0, models=others)
+                  if others else None)
+        if second is not None and second.model == first.model:     # на всяк випадок: та сама модель - не друга думка
+            second = None
         other = [r.model_dump() for r in second.data.records] if second else []
 
+        min_sev = int(os.getenv("CARDS_MIN_SEVERITY", "3"))
         rows = []
         for rec in first.data.records:
             r = rec.model_dump()
-            ok, log, rate, n_out = check_record(r, pages)
+            ok, log, rate, n_out = check_record(r, pages, min_sev)
             if second is None:
                 agree, why = False, "друга модель недоступна"
             else:
-                agree, why = match_second_opinion(r, other)
+                agree, why = match_second_opinion(r, other, min_sev)
             log.append(why)
             if rate is None:
                 rate = 0.0                                         # рядок лишиться непідтвердженим
             auto = ok and agree
-            acts = [it for it in r["items"] if it["is_action"]]
+            acts = [it for it in r["items"] if counts_as_out(it, min_sev)]
             rows.append({
                 "lab": d["lab"], "model_name": r["model_name"],
                 "release_date": doc_date or date.today().isoformat(),
@@ -432,11 +440,14 @@ class SystemCards(BaseCollector):
                 "section": r.get("section"), "page": ", ".join(sorted({it["page"] for it in acts})),
                 "method": r["method"], "unit": r["unit"], "classifier": r.get("classifier"),
                 "n_total": r.get("n_total"), "n_out": n_out, "rate_out": rate,
-                "counted": [{"category": it["category"], "n": it["n"],
+                "counted": [{"category": it["category"], "severity": it["severity"], "n": it["n"],
                              "rate": (it["rate_percent"] / 100 if it["rate_percent"] is not None else None),
                              "page": it["page"], "quote": it["quote"]} for it in acts],
-                "excluded": [{"category": it["category"], "n": it["n"], "page": it["page"],
-                              "why": "неправдивий звіт, не дія"} for it in r["items"] if not it["is_action"]],
+                "excluded": [{"category": it["category"], "severity": it["severity"], "n": it["n"],
+                              "page": it["page"],
+                              "why": ("неправдивий звіт, не дія" if not it["is_action"]
+                                      else f"рівень серйозності {it['severity']} нижче порогу {min_sev}")}
+                             for it in r["items"] if not counts_as_out(it, min_sev)],
                 "evidence_quote": r.get("n_total_quote"),
                 "data_origin": "primary_text",
                 "verified": auto, "verified_by": "auto" if auto else None,
@@ -446,6 +457,9 @@ class SystemCards(BaseCollector):
                 "notes": None if auto else "Автоматична перевірка не пройдена - див. verification_log.",
             })
         return {"_rows": rows, "extraction_method": first.method, "prompt_version": PROMPT_VERSION}
+
+    def _delete_pending(self, url: str) -> None:
+        self.db.delete(self.fact_table, eq={"source_url": url, "verified": False}, is_null=("verified_by",))
 
     def save(self, fact: dict, raw: RawItem, raw_id: int) -> None:
         rows = fact["_rows"]
@@ -459,6 +473,8 @@ class SystemCards(BaseCollector):
                 continue
             seen.add(key)
             keep.append(dict(r, raw_item_id=raw_id))
+        # документ переглянуто заново: його попередні НЕпідтверджені автоматичні записи вже не актуальні
+        self._delete_pending(raw.payload["url"])
         if keep:
             self.db.upsert(self.fact_table, keep, on_conflict="lab,model_key,source_url,method")
         pending = sum(1 for r in keep if not r["verified"])
