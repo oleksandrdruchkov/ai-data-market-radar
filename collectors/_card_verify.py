@@ -49,7 +49,14 @@ def _page_keys(page: str | None, pages: dict[str, str]) -> list[str]:
 
 def _number_variants(value: float, is_percent: bool) -> list[str]:
     if not is_percent:
-        return [str(int(value))] if float(value).is_integer() else [str(value)]
+        if not float(value).is_integer():
+            return [str(value)]
+        n = int(value)
+        out = {str(n)}
+        if n >= 1000:                                   # 49650 у документі може бути «49,650» або «49 650»
+            grouped = f"{n:,}"
+            out |= {grouped, grouped.replace(",", " "), grouped.replace(",", ".")}
+        return sorted(out)
     s = f"{value:.6f}".rstrip("0").rstrip(".")
     out = {s, s.lstrip("0") if s.startswith("0.") else s}
     if "." in s:
@@ -64,15 +71,25 @@ def _contains_number(text: str, value: float, is_percent: bool) -> bool:
     return False
 
 
-def check_record(rec: dict, pages: dict[str, str]) -> tuple[bool, list[str], float | None, int | None]:
-    """Повертає (пройдено, журнал, частка, n_out). rec - запис у форматі схеми CardRecord (dict)."""
+def counts_as_out(item: dict, min_severity: int) -> bool:
+    """Дія поза межами, і (якщо картка має шкалу серйозності) її рівень не нижчий за поріг."""
+    sev = item.get("severity")
+    return bool(item.get("is_action")) and (sev is None or sev >= min_severity)
+
+
+def check_record(rec: dict, pages: dict[str, str],
+                 min_severity: int = 3) -> tuple[bool, list[str], float | None, int | None]:
+    """Повертає (пройдено, журнал, частка, n_out). rec - запис у форматі схеми CardRecord (dict).
+    Дії зі шкалою серйозності нижче min_severity у частку не входять (однаково для всіх карток)."""
     log: list[str] = []
     norm_pages = {k: normalize(v) for k, v in pages.items()}
     ok = True
 
-    actions = [it for it in rec.get("items", []) if it.get("is_action")]
+    actions = [it for it in rec.get("items", []) if counts_as_out(it, min_severity)]
+    if any(it.get("severity") is not None for it in rec.get("items", [])):
+        log.append(f"поріг серйозності: рівень {min_severity} і вище")
     if not actions:
-        return False, ["немає жодної зарахованої дії поза межами"], None, None
+        return False, log + ["немає жодної зарахованої дії поза межами"], None, None
 
     for it in rec.get("items", []):
         label = f"«{it.get('category', '?')}»"
@@ -118,10 +135,11 @@ def check_record(rec: dict, pages: dict[str, str]) -> tuple[bool, list[str], flo
     return ok, log, rate, n_out
 
 
-def _signature(rec: dict) -> tuple:
+def _signature(rec: dict, min_severity: int = 3) -> tuple:
     acts = sorted((float(a["n"]) if a.get("n") is not None else -1.0,
-                   round(float(a["rate_percent"]), 6) if a.get("rate_percent") is not None else -1.0)
-                  for a in rec.get("items", []) if a.get("is_action"))
+                   round(float(a["rate_percent"]), 6) if a.get("rate_percent") is not None else -1.0,
+                   a.get("severity") if a.get("severity") is not None else -1)
+                  for a in rec.get("items", []) if counts_as_out(a, min_severity))
     return (rec.get("method"), rec.get("n_total"), tuple(acts))
 
 
@@ -129,13 +147,13 @@ def _model_key(name: str) -> str:
     return re.sub(r"[^a-z0-9.]", "", (name or "").lower())
 
 
-def match_second_opinion(rec: dict, other_records: list[dict]) -> tuple[bool, str]:
-    """Чи друга модель витягла для тієї ж моделі й методу ті самі числа й класифікацію."""
+def match_second_opinion(rec: dict, other_records: list[dict], min_severity: int = 3) -> tuple[bool, str]:
+    """Чи друга модель витягла для тієї ж моделі й методу ті самі зараховані числа й класифікацію."""
     same = [o for o in other_records
             if _model_key(o.get("model_name")) == _model_key(rec.get("model_name"))
             and o.get("method") == rec.get("method")]
     if not same:
         return False, "друга модель не знайшла такого запису"
-    if any(_signature(o) == _signature(rec) for o in same):
+    if any(_signature(o, min_severity) == _signature(rec, min_severity) for o in same):
         return True, "друга модель витягла ті самі числа"
     return False, "друга модель витягла інші числа або іншу класифікацію дій"

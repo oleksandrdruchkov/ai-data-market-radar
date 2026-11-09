@@ -89,6 +89,14 @@ class Db:
             q = q.eq(k, v)
         return q.execute().data or []
 
+    def delete(self, table: str, *, eq: dict, is_null: tuple = ()) -> None:
+        q = self.table(table).delete()
+        for k, v in eq.items():
+            q = q.eq(k, v)
+        for k in is_null:
+            q = q.is_(k, "null")
+        q.execute()
+
     def delete_not_in(self, table: str, *, eq: dict, column: str, keep: list) -> None:
         """Видаляє рядки за eq, крім тих, де column у keep (оновлення зв'язків «багато-до-багатьох»)."""
         q = self.table(table).delete()

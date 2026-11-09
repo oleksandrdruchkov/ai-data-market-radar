@@ -169,6 +169,39 @@ def test_second_opinion():
     assert not match_second_opinion(GOOD_RECORD, [])[0]
 
 
+def test_thousands_separators(pdf_pages):
+    pages = dict(pdf_pages)
+    pages["37"] = "We re-ran 49,650 trajectories from internal traffic."
+    pages["40"] = pages["40"].replace(" of 886", "")
+    pages["41"] = pages["41"].replace(" of 886", "")
+    rec = dict(GOOD_RECORD, n_total=49650, n_total_page="37",
+               n_total_quote="We re-ran 49,650 trajectories from internal traffic.")
+    rec["items"] = [dict(i, quote=i["quote"].replace(" of 886", "")) for i in GOOD_RECORD["items"]]
+    ok, log, rate, n_out = check_record(rec, pages)
+    assert ok, log
+    assert n_out == 13 and abs(rate - 13 / 49650) < 1e-12
+
+
+def test_severity_threshold_is_applied_by_code():
+    """OpenAI: рівні 0-4. Однаковий поріг для всіх карток - рахує код, а не модель."""
+    pages = {"70": ("Severity 1 flags: 6.1% of trajectories. Severity 2 flags: 1.2% of trajectories. "
+                    "Severity 3 flags: 0.251% of trajectories. Severity 4 flags: 0.002% of trajectories.")}
+    items = [{"category": f"Severity {lvl}", "is_action": True, "severity": lvl, "n": None,
+              "rate_percent": rate, "page": "70", "quote": f"Severity {lvl} flags: {rate}% of trajectories."}
+             for lvl, rate in ((1, 6.1), (2, 1.2), (3, 0.251), (4, 0.002))]
+    rec = {"model_name": "GPT-6 Astra", "method": "deployment_simulation", "unit": "trajectory", "items": items}
+    ok, log, rate, _ = check_record(rec, pages, 3)
+    assert ok, log
+    assert abs(rate - 0.00253) < 1e-12                     # лише рівні 3 і 4
+    assert any("поріг серйозності: рівень 3" in l for l in log)
+    _, _, rate1, _ = check_record(rec, pages, 1)
+    assert abs(rate1 - 0.07553) < 1e-12                    # поріг можна змінити налаштуванням
+    # друга модель погоджується, навіть якщо по-іншому записала нижчі рівні - важать лише зараховані
+    other = json.loads(json.dumps(rec)); other["items"][0]["rate_percent"] = 6.0
+    assert match_second_opinion(rec, [other], 3)[0]
+    assert not match_second_opinion(rec, [other], 1)[0]
+
+
 def test_any_unit_is_accepted():
     rec = sc.CardRecord.model_validate({**GOOD_RECORD, "unit": "Completion"})
     assert rec.unit == "turn"
@@ -331,3 +364,22 @@ def test_queue_failure_does_not_fail_the_card(db, monkeypatch):
                         if url == sc.INDEXES[1]["url"] else Resp(addendum, "text/html"))
     stats = sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": {"document_date": "2026-09-29", "records": []}})).run()
     assert stats["failed"] == 0
+
+
+@needs_pg
+def test_second_opinion_falls_through_and_stale_rows_removed(db, monkeypatch):
+    """Друга модель вичерпала квоту - береться третя; повторна обробка прибирає старі неперевірені записи."""
+    pdf = make_pdf()
+    monkeypatch.setattr(sc, "http_get", lambda url: Resp(ANTHROPIC_INDEX.encode(), "text/html")
+                        if url == sc.INDEXES[0]["url"] else Resp(b"", "text/html") if url == sc.INDEXES[1]["url"]
+                        else Resp(pdf, "application/pdf"))
+    monkeypatch.setenv("CARDS_MAX_PER_RUN", "1")
+    url = "https://www-cdn.anthropic.com/abc/Mythos51.pdf"
+    db.insert("fct_leader_action_rates", {
+        "lab": "Anthropic", "model_name": "Old guess", "release_date": "2026-09-01", "source_doc": "x",
+        "source_url": url, "method": "deployment_simulation", "unit": "turn", "rate_out": 0.28})
+    extraction = {"document_date": "2026-09-01", "records": [GOOD_RECORD]}
+    sc.SystemCards(db=db, llm=ScriptedLlm(db, {"m1": extraction, "m2": "quota", "m3": extraction})).run()
+    rows = db.select("fct_leader_action_rates", eq={"source_url": url})
+    assert [r["model_name"] for r in rows] == ["Claude Mythos 5.1"]
+    assert rows[0]["verified"] is True and "m3" in rows[0]["extraction_method"]
