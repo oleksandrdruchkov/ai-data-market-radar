@@ -26,7 +26,7 @@ from typing import Literal
 from urllib.parse import urljoin
 
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core import BaseCollector, RawItem, Skip
 from core.db import iso, utcnow
@@ -34,7 +34,7 @@ from collectors._card_verify import check_record, match_second_opinion
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
 PROMPT_VERSION = "card_actions_v2"
-PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3"   # discover v4: зміна пошуку не потребує повторної обробки   # змінилась - документи переглядаються знову
+PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3/units_v2"   # змінилась - документи переглядаються знову
 
 # Картка = посилання, в тексті якого (або в рядку поруч) є «system card». Вигляд адреси не важливий:
 # нові картки Anthropic мають у назві файлу пробіли й «&» або лежать на інших адресах.
@@ -235,6 +235,17 @@ def relevant_pages(pages: dict[str, str]) -> dict[str, str]:
 
 # ---------------- схема відповіді моделі ----------------
 
+UNIT_SYNONYMS = {
+    "use": "use", "uses": "use", "usage": "use", "day to day use": "use", "session": "session",
+    "sessions": "session", "turn": "turn", "turns": "turn", "response": "turn", "responses": "turn",
+    "completion": "turn", "completions": "turn", "conversation turn": "turn",
+    "tool call": "tool_call", "tool_call": "tool_call", "tool calls": "tool_call", "action": "tool_call",
+    "actions": "tool_call", "trajectory": "trajectory", "trajectories": "trajectory", "episode": "trajectory",
+    "rollout": "trajectory", "transcript": "transcript", "transcripts": "transcript",
+    "task": "task", "tasks": "task", "conversation": "conversation", "conversations": "conversation",
+}
+
+
 class CardItem(BaseModel):
     category: str = Field(min_length=3, max_length=200)
     is_action: bool                      # True - дія поза межами; False - неправдивий звіт тощо
@@ -247,7 +258,14 @@ class CardItem(BaseModel):
 class CardRecord(BaseModel):
     model_name: str = Field(min_length=2, max_length=80)
     method: Literal["internal_use_sample", "deployment_simulation"]
-    unit: Literal["use", "turn", "tool_call", "trajectory"]
+    unit: str = Field(default="use", max_length=40)
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _unit(cls, v):
+        """Одиниця потрібна лише для підпису: приймаємо будь-яку, знайомі синоніми зводимо до стандартних."""
+        u = re.sub(r"[^a-z_ -]", "", str(v or "use").lower()).strip().replace("-", " ")
+        return UNIT_SYNONYMS.get(u, u.replace(" ", "_") or "use")
     n_total: int | None = Field(default=None, gt=0)
     n_total_quote: str | None = None
     n_total_page: str | None = None

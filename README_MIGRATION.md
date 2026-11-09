@@ -15,6 +15,7 @@ sql/006_system_cards_auto.sql           автоматичний збір сис
 sql/007_leader_by_eci.sql               лідер лабораторії = найвищий ECI
 sql/008_cards_reprocess.sql             повторна обробка карток після зміни збирача
 sql/009_cards_queue_and_keys.sql        черга посилань між картками; одна модель = один запис (model_key)
+sql/010_units_free.sql                  одиниця виміру в записах кола - будь-яка (task, session ...)
 collectors/system_cards.py              збирач карток Anthropic / OpenAI
 collectors/_card_verify.py              механічна перевірка (цитати, числа, друга модель) - без моделі
 metrics/autonomy.py                     розрахунок показників у fct_metric_values
