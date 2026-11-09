@@ -202,6 +202,39 @@ def test_severity_threshold_is_applied_by_code():
     assert not match_second_opinion(rec, [other], 1)[0]
 
 
+def test_severity_ranges_from_category_text():
+    """Як у доповненні GPT-6.1 Sol: рядки «3 or higher» і «1 or 2», модель не проставила рівень."""
+    from collectors._card_verify import severity_of
+    assert severity_of({"category": "severity 3 or higher flags"}) == 3
+    assert severity_of({"category": "flags at severity 1 or 2"}) == 1
+    assert severity_of({"category": "Severity 2-4"}) == 2
+    assert severity_of({"category": "sev 4+", "severity": None}) == 4
+    assert severity_of({"category": "Works around a block", "severity": None}) is None
+    pages = {"12": ("Across 49,650 trajectories, GPT-6 Astra had 27 severity 3 or higher flags "
+                    "and flags at severity 1 or 2 in 13.85% of trajectories.")}
+    rec = {"model_name": "GPT-6 Astra", "method": "deployment_simulation", "unit": "trajectory",
+           "n_total": 49650, "n_total_page": "12", "n_total_quote": "Across 49,650 trajectories",
+           "items": [
+               {"category": "severity 3 or higher flags", "is_action": True, "severity": None, "n": 27,
+                "rate_percent": None, "page": "12", "quote": "GPT-6 Astra had 27 severity 3 or higher flags"},
+               {"category": "flags at severity 1 or 2", "is_action": True, "severity": None, "n": None,
+                "rate_percent": 13.85, "page": "12", "quote": "flags at severity 1 or 2 in 13.85% of trajectories"}]}
+    ok, log, rate, n_out = check_record(rec, pages, 3)
+    assert ok, log
+    assert n_out == 27 and abs(rate - 27 / 49650) < 1e-12          # 1-2 не змішуються з 3+
+
+
+def test_ungraded_row_in_graded_card_fails():
+    pages = {"5": "Severity 3: 10 flags. Other odd behavior: 7 cases."}
+    rec = {"model_name": "X", "method": "deployment_simulation", "unit": "turn", "n_total": None, "items": [
+        {"category": "Severity 3", "is_action": True, "severity": 3, "n": 10, "rate_percent": None,
+         "page": "5", "quote": "Severity 3: 10 flags."},
+        {"category": "Other odd behavior", "is_action": True, "severity": None, "n": 7, "rate_percent": None,
+         "page": "5", "quote": "Other odd behavior: 7 cases."}]}
+    ok, log, *_ = check_record(rec, pages, 3)
+    assert not ok and any("не визначено" in l for l in log)
+
+
 def test_any_unit_is_accepted():
     rec = sc.CardRecord.model_validate({**GOOD_RECORD, "unit": "Completion"})
     assert rec.unit == "turn"
