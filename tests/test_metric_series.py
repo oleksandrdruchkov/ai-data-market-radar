@@ -76,7 +76,8 @@ def db():
     subprocess.run(["psql", *base, "-c", "DROP DATABASE IF EXISTS radar_test_ms",
                     "-c", "CREATE DATABASE radar_test_ms"], check=True, capture_output=True)
     dbargs = ARGS + ["-d", "radar_test_ms"]
-    for f in ["tests/sql/legacy_schema.sql", "sql/001_core_framework.sql", "sql/011_bubble_metrics.sql"]:
+    for f in ["tests/sql/legacy_schema.sql", "sql/001_core_framework.sql", "sql/011_bubble_metrics.sql",
+              "sql/012_baa10y.sql"]:
         subprocess.run(["psql", *dbargs, "-v", "ON_ERROR_STOP=1", "-q", "-f", str(ROOT / f)],
                        check=True, capture_output=True)
     return PgDb(dbargs)
@@ -155,5 +156,7 @@ def test_migration_metadata(db):
     assert m["adzuna_ml_share"]["denominator_def"] == "adzuna_swe_count"
     assert m["fred_ig_oas"]["topic"] == "bubble" and m["indeed_softdev_postings"]["topic"] == "shared"
     assert m["vacancies_new"]["topic"] == "radar"
+    assert m["fred_baa10y"]["topic"] == "bubble"
+    assert ("fred_baa10y", "US", "BAA10Y") in fred_series.FIXED
     src = {r["source"] for r in db.select("ops_sources")}
     assert {"fred_series", "adzuna_counts"} <= src

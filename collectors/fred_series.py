@@ -4,6 +4,7 @@ collectors/fred_series.py
 
   fred_ig_oas             BAMLC0A0CM     спред інвестиційного рівня, %        (US)
   fred_hy_oas             BAMLH0A0HYM2   спред високодохідних облігацій, %    (US)
+  fred_baa10y             BAA10Y         спред Moody's Baa над 10-річними, %  (US, історія з 1986)
   fred_ust10y             DGS10          дохідність 10-річних облігацій, %    (US)
   fred_fed_funds          DFF            ефективна ставка ФРС, %              (US)
   indeed_softdev_postings IHLIDX{CC}TPSOFTDEVE  вакансії розробників, індекс  (US, GB, DE)
@@ -12,7 +13,7 @@ collectors/fred_series.py
 Джерело - публічний CSV FRED (fredgraph.csv), ключ API не потрібен.
 Порожні значення FRED («.» у вихідні та свята) пропускаються, а не заповнюються.
 
-Ліцензії: ряди ICE BofA (спреди) мають обмеження на передрук - на публічному табло
+Ліцензії: ряди ICE BofA і Moody's (спреди) мають обмеження на передрук - на публічному табло
 показувати похідний бал індексу, а не сирі значення. Indeed: вказувати
 «Indeed Hiring Lab via FRED».
 
@@ -38,6 +39,7 @@ HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruch
 FIXED = [
     ("fred_ig_oas", "US", "BAMLC0A0CM"),
     ("fred_hy_oas", "US", "BAMLH0A0HYM2"),
+    ("fred_baa10y", "US", "BAA10Y"),        # ICE - лише 3 роки; цей - для перевірки на 2022 році
     ("fred_ust10y", "US", "DGS10"),
     ("fred_fed_funds", "US", "DFF"),
 ]
