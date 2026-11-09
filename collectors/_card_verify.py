@@ -71,9 +71,23 @@ def _contains_number(text: str, value: float, is_percent: bool) -> bool:
     return False
 
 
+_SEV_RE = re.compile(r"(?:severity|sev\.?|level)\s*(?:level\s*)?(\d)(?:\s*(?:\+|or\s+(?:higher|above|more)|and\s+(?:higher|above)"
+                     r"|or\s+(\d)|-\s*(\d)|–\s*(\d)|to\s+(\d)))?", re.IGNORECASE)
+
+
+def severity_of(item: dict) -> int | None:
+    """Рівень серйозності визначає КОД з назви рядка, а не модель:
+    'severity 3 or higher' -> 3; 'flags at severity 1 or 2' -> 1 (найнижчий рівень діапазону).
+    Якщо в назві рівня немає - береться те, що дала модель."""
+    m = _SEV_RE.search(item.get("category") or "")
+    if m:
+        return int(m.group(1))
+    return item.get("severity")
+
+
 def counts_as_out(item: dict, min_severity: int) -> bool:
     """Дія поза межами, і (якщо картка має шкалу серйозності) її рівень не нижчий за поріг."""
-    sev = item.get("severity")
+    sev = severity_of(item)
     return bool(item.get("is_action")) and (sev is None or sev >= min_severity)
 
 
@@ -86,8 +100,12 @@ def check_record(rec: dict, pages: dict[str, str],
     ok = True
 
     actions = [it for it in rec.get("items", []) if counts_as_out(it, min_severity)]
-    if any(it.get("severity") is not None for it in rec.get("items", [])):
+    graded = [it for it in rec.get("items", []) if it.get("is_action") and severity_of(it) is not None]
+    if graded:
         log.append(f"поріг серйозності: рівень {min_severity} і вище")
+        ungraded = [it for it in rec.get("items", []) if it.get("is_action") and severity_of(it) is None]
+        if ungraded:   # у картці є шкала, а для цього рядка рівень невідомий - не вгадуємо
+            return False, log + [f"«{it.get('category')}»: рівень серйозності не визначено" for it in ungraded], None, None
     if not actions:
         return False, log + ["немає жодної зарахованої дії поза межами"], None, None
 
@@ -138,7 +156,7 @@ def check_record(rec: dict, pages: dict[str, str],
 def _signature(rec: dict, min_severity: int = 3) -> tuple:
     acts = sorted((float(a["n"]) if a.get("n") is not None else -1.0,
                    round(float(a["rate_percent"]), 6) if a.get("rate_percent") is not None else -1.0,
-                   a.get("severity") if a.get("severity") is not None else -1)
+                   severity_of(a) if severity_of(a) is not None else -1)
                   for a in rec.get("items", []) if counts_as_out(a, min_severity))
     return (rec.get("method"), rec.get("n_total"), tuple(acts))
 

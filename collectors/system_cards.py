@@ -30,11 +30,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from core import BaseCollector, RawItem, Skip
 from core.db import iso, utcnow
-from collectors._card_verify import check_record, counts_as_out, match_second_opinion
+from collectors._card_verify import check_record, counts_as_out, match_second_opinion, severity_of
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
 PROMPT_VERSION = "card_actions_v3"
-PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3/units_v2/verify_v3"   # змінилась - документи переглядаються знову
+PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3/units_v2/verify_v4"   # змінилась - документи переглядаються знову
 
 # Картка = посилання, в тексті якого (або в рядку поруч) є «system card». Вигляд адреси не важливий:
 # нові картки Anthropic мають у назві файлу пробіли й «&» або лежать на інших адресах.
@@ -297,8 +297,10 @@ For each category of behavior in the allowed data, add an item:
   ignoring an explicit prohibition by DOING something.
 - is_action = false: false or unverified REPORTS about the work (claiming done/verified when not, guesses stated
   as fact, invented details) - these are statements, not actions.
-- If the card grades behaviors on a SEVERITY scale (e.g. 0-4), add ONE item per severity level (and per category
-  if given), with "severity" = that level. Never merge levels and never report "any severity" totals as one item.
+- If the card grades behaviors on a SEVERITY scale (e.g. 0-4), add ONE item per severity level or per row of the
+  card's table (and per category if given), with "severity" = that level; for a row covering a range
+  ("severity 3 or higher", "severity 1 or 2") use the LOWEST level of the range and keep the row's wording in
+  "category". Never merge rows and never report "any severity" totals as one item.
   If there is no severity scale, severity = null.
 - n = count, or rate_percent = percentage (as printed, e.g. 0.251 for "0.251%"). Only numbers printed in the TEXT;
   if a number is only visible in a chart/figure, leave it null.
@@ -440,13 +442,13 @@ class SystemCards(BaseCollector):
                 "section": r.get("section"), "page": ", ".join(sorted({it["page"] for it in acts})),
                 "method": r["method"], "unit": r["unit"], "classifier": r.get("classifier"),
                 "n_total": r.get("n_total"), "n_out": n_out, "rate_out": rate,
-                "counted": [{"category": it["category"], "severity": it["severity"], "n": it["n"],
+                "counted": [{"category": it["category"], "severity": severity_of(it), "n": it["n"],
                              "rate": (it["rate_percent"] / 100 if it["rate_percent"] is not None else None),
                              "page": it["page"], "quote": it["quote"]} for it in acts],
-                "excluded": [{"category": it["category"], "severity": it["severity"], "n": it["n"],
+                "excluded": [{"category": it["category"], "severity": severity_of(it), "n": it["n"],
                               "page": it["page"],
                               "why": ("неправдивий звіт, не дія" if not it["is_action"]
-                                      else f"рівень серйозності {it['severity']} нижче порогу {min_sev}")}
+                                      else f"рівень серйозності {severity_of(it)} нижче порогу {min_sev}")}
                              for it in r["items"] if not counts_as_out(it, min_sev)],
                 "evidence_quote": r.get("n_total_quote"),
                 "data_origin": "primary_text",
