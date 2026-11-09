@@ -67,6 +67,19 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m collectors.system_cards
 
+      # ---------- Індекс крихкості бульбашки ШІ (sql/011_bubble_metrics.sql) ----------
+
+      - name: Bubble - FRED (спреди, ставки, вакансії Indeed)
+        if: ${{ !cancelled() }}
+        run: python -m collectors.fred_series
+
+      - name: Bubble - Adzuna counts (ML vs розробники)
+        if: ${{ !cancelled() }}
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+        run: python -m collectors.adzuna_counts
+
       # ---------- Показники ----------
 
       - name: Metrics - autonomy (T50 frontier, SAI_T)
