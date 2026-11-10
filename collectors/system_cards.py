@@ -5,7 +5,8 @@ collectors/system_cards.py
 Що робить щодня:
   1. переглядає покажчики карток Anthropic і OpenAI, бере нові (ще не оброблені) документи;
   2. завантажує документ (PDF або HTML), відбирає сторінки про дії в реальній роботі;
-  3. модель A витягує записи: модель, метод (лише реальна робота), кількості, цитати, сторінки;
+  3. модель A витягує записи: модель, метод, кількості, цитати, сторінки; зберігаються лише
+     записи реального використання (internal_use_sample) - симуляції й тести відкидаються;
   4. модель B (інша) витягує те саме незалежно - «друга думка»;
   5. код перевіряє кожен запис (collectors/_card_verify.py) і підтверджує автоматично
      лише те, що пройшло всі умови; решта чекає на людину й на коло не потрапляє.
@@ -31,9 +32,10 @@ from pydantic import BaseModel, Field, field_validator
 from core import BaseCollector, RawItem, Skip
 from core.db import iso, utcnow
 from collectors._card_verify import check_record, counts_as_out, match_second_opinion, severity_of
+from core.review import REAL_METHOD
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
-PROMPT_VERSION = "card_actions_v3"
+PROMPT_VERSION = "card_actions_v4"   # v4: лише реальне використання, без симуляцій
 PROCESSING_VERSION = f"{PROMPT_VERSION}/pages_v3/units_v2/verify_v4"   # змінилась - документи переглядаються знову
 
 # Картка = посилання, в тексті якого (або в рядку поруч) є «system card». Вигляд адреси не важливий:
@@ -286,9 +288,10 @@ def build_prompt(lab: str, title: str, pages: dict[str, str]) -> str:
 the model takes actions BEYOND THE BOUNDS of its task in REAL usage.
 
 Allowed data (method):
-- "internal_use_sample": a sample of real, day-to-day use of the model (e.g. internal Claude Code use);
-- "deployment_simulation": re-generation of real user/agent traffic with the new model.
-NOT allowed - return nothing for them: constructed scenarios, red-teaming, honeypots, synthetic environments,
+- "internal_use_sample": a sample of the model's REAL, day-to-day use where the model itself did the work
+  (e.g. internal Claude Code use by employees, real deployment transcripts of THIS model).
+NOT allowed - return nothing for them: deployment simulations or re-generation/resampling of recorded traffic
+with the new model, constructed scenarios, red-teaming, honeypots, synthetic environments,
 "trap" tests built to provoke misbehavior, capability benchmarks.
 
 For each category of behavior in the allowed data, add an item:
@@ -311,7 +314,7 @@ model_name = the evaluated model as named in the card. document_date = the card'
 If there is no allowed data, return {{"document_date": ..., "records": []}}.
 
 Return strictly valid JSON for this schema:
-{{"document_date": "YYYY-MM-DD", "records": [{{"model_name": "...", "method": "internal_use_sample|deployment_simulation",
+{{"document_date": "YYYY-MM-DD", "records": [{{"model_name": "...", "method": "internal_use_sample",
  "unit": "use|turn|tool_call|trajectory", "n_total": 886, "n_total_quote": "...", "n_total_page": "37",
  "classifier": "who classified the behaviors", "section": "2.3.3",
  "items": [{{"category": "...", "is_action": true, "severity": null, "n": 9, "rate_percent": null, "page": "40", "quote": "..."}}]}}]}}
@@ -403,6 +406,8 @@ class SystemCards(BaseCollector):
                                  prompt_version=PROMPT_VERSION, content_hash=raw.content_hash, temperature=0.0)
         if first is None:
             return None                                           # відкласти до наступного запуску
+        # Лише реальне використання: якщо модель усе ж повернула симуляцію - відкидаємо тут, кодом
+        first.data.records = [r for r in first.data.records if r.method == REAL_METHOD]
         doc_date = (first.data.document_date or "")[:10]
         if doc_date and doc_date < d.get("since", "2026-01-01"):
             self._mark(d, "no_real_use_data", note=f"старий документ {doc_date}; {sent}"); raise Skip("старий документ")
@@ -419,7 +424,7 @@ class SystemCards(BaseCollector):
                   if others else None)
         if second is not None and second.model == first.model:     # на всяк випадок: та сама модель - не друга думка
             second = None
-        other = [r.model_dump() for r in second.data.records] if second else []
+        other = [r.model_dump() for r in second.data.records if r.method == REAL_METHOD] if second else []
 
         min_sev = int(os.getenv("CARDS_MIN_SEVERITY", "3"))
         rows = []

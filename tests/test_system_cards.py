@@ -257,7 +257,8 @@ def db():
     for f in ["tests/sql/legacy_schema.sql", "tests/sql/horizons_schema.sql", "sql/001_core_framework.sql",
               "sql/004_autonomy_horizons.sql", "sql/005_leader_actions.sql", "sql/006_system_cards_auto.sql",
               "sql/007_leader_by_eci.sql", "sql/008_cards_reprocess.sql", "sql/009_cards_queue_and_keys.sql",
-              "sql/009_cards_queue_and_keys.sql", "sql/010_units_free.sql", "sql/010_units_free.sql"]:
+              "sql/009_cards_queue_and_keys.sql", "sql/010_units_free.sql", "sql/010_units_free.sql",
+              "sql/013_real_use_only_and_review.sql", "sql/013_real_use_only_and_review.sql"]:
         subprocess.run(["psql", *dbargs, "-v", "ON_ERROR_STOP=1", "-q", "-f", str(ROOT / f)],
                        check=True, capture_output=True)
     return PgDb(dbargs)
@@ -302,15 +303,16 @@ def test_collector_end_to_end(db, monkeypatch):
     assert good["verified"] is True and good["verified_by"] == "auto"
     assert good["n_out"] == 13 and abs(float(good["rate_out"]) - 13 / 886) < 1e-9
     assert [c["category"] for c in good["counted"]] == ["Works around a block", "Ignores an explicit instruction"]
-    fig = rows[("Claude Mythos 5.1", "deployment_simulation")]
-    assert fig["verified"] is False and fig["verified_by"] is None          # числа лише на графіку
+    # симуляцію (перегенерацію трафіку) збирач відкидає: на коло лише реальне використання (sql/013)
+    assert ("Claude Mythos 5.1", "deployment_simulation") not in rows
     assert rows[("Claude Mythos 5", "internal_use_sample")]["verified_by"] == "human"
 
     # на колі: Anthropic тепер Mythos 5.1 (новіша), OpenAI - старий запис ще не підтверджено
     models = db.select("v_leader_action_models")
     assert [(m["lab"], m["model_name"]) for m in models] == [("Anthropic", "Claude Mythos 5.1")]
     assert db.select("ops_quality_alerts", eq={"check_name": "index_empty"})
-    assert db.select("ops_quality_alerts", eq={"check_name": "pending_human_review"})
+    # непідтвердженим був лише запис-симуляція; його відкинуто - на людину нічого не чекає
+    assert not db.select("ops_quality_alerts", eq={"check_name": "pending_human_review"})
 
     # наступного дня той самий документ не завантажується вдруге
     calls.clear()
