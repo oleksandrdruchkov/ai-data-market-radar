@@ -1074,6 +1074,172 @@ if not df_lead_pending.empty:
 st.markdown("[🔒 Review records (password)](?review=1)" if is_en else "[🔒 Перевірити записи (за паролем)](?review=1)")
 
 # ==========================================
+# ІНДЕКС КРИХКОСТІ БУЛЬБАШКИ ШІ (v0) І «МІСТ» ДО SAI
+# Розрахунок - metrics/bubble.py; тут лише показ. Спреди ICE/Moody's показуються
+# лише як бали 0-100 (ліцензії не дозволяють передрук сирих рядів).
+# ==========================================
+BUBBLE_ZONES = [(0, 40, "#16a34a", "calm", "спокійно"), (40, 70, "#d97706", "tension", "напруга"),
+                (70, 100.01, "#dc2626", "high tension", "висока напруга")]
+BUBBLE_PARTS = {
+    "bubble_score_credit": ("Credit spread (Moody's Baa)", "Кредитний спред (Moody's Baa)"),
+    "bubble_score_hy": ("High-yield spread", "Спред високодохідних облігацій"),
+    "bubble_score_rate10y": ("10-year Treasury yield", "Дохідність 10-річних облігацій США"),
+    "bubble_score_policy": ("Fed funds rate", "Ставка ФРС"),
+    "bubble_score_devjobs": ("Developer postings vs all postings (US)", "Вакансії розробників відносно всіх (США)"),
+}
+
+
+def _zone(v):
+    for lo, hi, color, en, ua in BUBBLE_ZONES:
+        if lo <= v < hi:
+            return color, (en if is_en else ua)
+    return "#64748b", "—"
+
+
+def _fetch_series(metric_id, region, since=None):
+    rows, off = [], 0
+    while True:
+        q = (supabase.table("fct_metric_values").select("period_start,value,numerator,denominator")
+             .eq("metric_id", metric_id).eq("region", region))
+        if since:
+            q = q.gte("period_start", since)
+        page = q.order("period_start").range(off, off + 999).execute().data or []
+        rows.extend(page)
+        if len(page) < 1000:
+            return pd.DataFrame(rows)
+        off += 1000
+
+
+@st.cache_data(ttl=600)
+def load_bubble():
+    try:
+        out = {"fragility": _fetch_series("bubble_fragility", "US"), "parts": {}, "jobs": {}, "adzuna": []}
+        for mid in BUBBLE_PARTS:
+            last = (supabase.table("fct_metric_values").select("period_start,value").eq("metric_id", mid)
+                    .eq("region", "US").order("period_start", desc=True).limit(1).execute().data)
+            if last:
+                out["parts"][mid] = last[0]
+        for mid in ("indeed_softdev_postings", "indeed_total_postings"):
+            out["jobs"][mid] = _fetch_series(mid, "US")
+        out["adzuna"] = (supabase.table("fct_metric_values").select("region,period_start,value,numerator,denominator")
+                         .eq("metric_id", "adzuna_ml_share").order("period_start", desc=True).limit(30).execute().data)
+        return out, None
+    except Exception as ex:
+        return None, str(ex)[:300]
+
+
+bubble, bubble_error = load_bubble()
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>"
+            + ("AI investment bubble: fragility index (v0)" if is_en else "Інвестиційна бульбашка ШІ: індекс крихкості (v0)")
+            + "</div>", unsafe_allow_html=True)
+
+if bubble_error:
+    st.caption(f"⚠️ bubble: {bubble_error}")
+elif bubble["fragility"].empty:
+    st.info("The index will appear after the first run of metrics/bubble.py." if is_en
+            else "Індекс з'явиться після першого запуску розрахунку (metrics/bubble.py).")
+else:
+    fr = bubble["fragility"].copy()
+    fr["period_start"] = pd.to_datetime(fr["period_start"])
+    fr["value"] = fr["value"].astype(float)
+    cur = fr.iloc[-1]
+    color, label = _zone(cur["value"])
+    n_used = int(cur["numerator"]) if pd.notna(cur.get("numerator")) else None
+    n_all = int(cur["denominator"]) if pd.notna(cur.get("denominator")) else None
+
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.markdown(
+            f"<div style='background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:12px;'>"
+            f"<div style='font-size:0.7rem;color:#64748b;font-weight:700;text-transform:uppercase;'>"
+            f"{'Fragility' if is_en else 'Крихкість'} · {cur['period_start'].date()}</div>"
+            f"<div style='font-size:2.2rem;font-weight:800;color:{color};line-height:1.1;'>{cur['value']:.0f}"
+            f"<span style='font-size:0.9rem;color:#64748b;'> / 100</span></div>"
+            f"<div style='font-size:0.85rem;font-weight:700;color:{color};'>{label}</div>"
+            f"<div style='font-size:0.7rem;color:#64748b;margin-top:4px;'>"
+            + (f"{n_used} of {n_all} components" if is_en else f"складників: {n_used} з {n_all}")
+            + "</div></div>", unsafe_allow_html=True)
+        for mid, (en, ua) in BUBBLE_PARTS.items():
+            p = bubble["parts"].get(mid)
+            if p is None:
+                st.caption(f"{en if is_en else ua}: —")
+                continue
+            pc, pl = _zone(float(p["value"]))
+            st.markdown(f"<div style='font-size:0.78rem;'><span style='color:{pc};font-weight:800;'>"
+                        f"{float(p['value']):.0f}</span> · {en if is_en else ua}</div>", unsafe_allow_html=True)
+    with c2:
+        fig_b = go.Figure()
+        for lo, hi, zc, _, _ in BUBBLE_ZONES:
+            fig_b.add_hrect(y0=lo, y1=min(hi, 100), fillcolor=zc, opacity=0.06, line_width=0)
+        fig_b.add_trace(go.Scatter(x=fr["period_start"], y=fr["value"], mode="lines",
+                                   line=dict(color="#0f172a", width=1.6),
+                                   hovertemplate="%{x|%Y-%m-%d}: %{y:.0f}<extra></extra>"))
+        fig_b.add_vrect(x0="2022-01-01", x1="2022-12-31", fillcolor="#94a3b8", opacity=0.12, line_width=0,
+                        annotation_text=("2022: tech correction" if is_en else "2022: корекція техсектору"),
+                        annotation_position="top left", annotation_font_size=9)
+        fig_b.update_layout(height=300, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                            margin=dict(l=10, r=10, t=20, b=10), showlegend=False,
+                            font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+                            yaxis=dict(range=[0, 100], gridcolor="#f1f5f9"), xaxis=dict(gridcolor="#f1f5f9"))
+        st.plotly_chart(fig_b, use_container_width=True, theme=None, config={'displayModeBar': False})
+
+    # --- Міст до SAI: люди
+    st.markdown("<div style='font-weight:700; font-size:0.9rem; color:#0f172a; margin:6px 0;'>"
+                + ("Bridge to SAI: who is being hired" if is_en else "Міст до SAI: кого наймають") + "</div>",
+                unsafe_allow_html=True)
+    j1, j2 = st.columns([3, 1])
+    with j1:
+        fig_j = go.Figure()
+        for mid, name_en, name_ua, col in (("indeed_softdev_postings", "Software developers", "Розробники", "#2563eb"),
+                                           ("indeed_total_postings", "All jobs", "Усі вакансії", "#94a3b8")):
+            d = bubble["jobs"].get(mid)
+            if d is not None and not d.empty:
+                fig_j.add_trace(go.Scatter(x=pd.to_datetime(d["period_start"]), y=d["value"].astype(float),
+                                           mode="lines", name=name_en if is_en else name_ua, line=dict(color=col, width=1.6)))
+        fig_j.add_hline(y=100, line_dash="dot", line_color="#64748b", line_width=1)
+        fig_j.update_layout(height=240, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                            margin=dict(l=10, r=10, t=10, b=10),
+                            legend=dict(orientation="h", y=1.08, x=0, font=dict(size=9)),
+                            font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+                            yaxis=dict(title=("Indeed, Feb 2020 = 100" if is_en else "Indeed, лютий 2020 = 100"),
+                                       gridcolor="#f1f5f9"))
+        st.plotly_chart(fig_j, use_container_width=True, theme=None, config={'displayModeBar': False})
+    with j2:
+        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#64748b;'>"
+                    + ("ML share of developer postings (Adzuna)" if is_en else "Частка ML серед вакансій розробників (Adzuna)")
+                    + "</div>", unsafe_allow_html=True)
+        seen = set()
+        for r in bubble["adzuna"]:
+            if r["region"] in seen:
+                continue
+            seen.add(r["region"])
+            st.markdown(f"<div style='font-size:0.85rem;'><b>{r['region']}</b>: {100 * float(r['value']):.1f}% "
+                        f"<span style='color:#64748b;font-size:0.7rem;'>({r['period_start']})</span></div>",
+                        unsafe_allow_html=True)
+        st.caption("Trend needs a few weeks of daily data." if is_en
+                   else "Тенденція з'явиться через кілька тижнів щоденного збору.")
+
+    with st.expander("Methodology: fragility index" if is_en else "Методологія: індекс крихкості"):
+        if is_en:
+            st.markdown(r"""
+            * **Score of a component (0-100):** the percentile of today's value among **all earlier values** of that series (expanding window). Every past day uses only what was known that day, so the line before 2022 is an honest out-of-sample check.
+            * **Components (v0, equal weights):** Moody's Baa credit spread, high-yield spread (history only since late 2023), 10-year Treasury yield, fed funds rate, developer postings relative to all postings on Indeed (US; fewer developers = higher score).
+            * **Index:** the mean of the available component scores (at least 2). Zones 0-40 / 40-70 / 70-100 are v0 conventions, not calibrated.
+            * **Not a forecast and not investment advice.** It shows how unusual today's financing and hiring conditions are against their own history.
+            * **Sources:** FRED (Federal Reserve Bank of St. Louis); Indeed Hiring Lab via FRED; Adzuna API. Spreads (ICE BofA, Moody's) are shown only as scores, not raw values, because of their licences.
+            """)
+        else:
+            st.markdown(r"""
+            * **Бал складника (0-100):** процентиль сьогоднішнього значення серед **усіх попередніх** значень цього ряду (розширюване вікно). Для кожного дня в минулому використано лише те, що було відомо того дня, тож лінія перед 2022 роком - чесна перевірка «наперед».
+            * **Складники (v0, рівні ваги):** кредитний спред Moody's Baa, спред високодохідних облігацій (історія лише з кінця 2023), дохідність 10-річних облігацій США, ставка ФРС, вакансії розробників відносно всіх вакансій на Indeed (США; менше розробників = вищий бал).
+            * **Індекс:** середнє наявних балів (щонайменше 2). Зони 0-40 / 40-70 / 70-100 - умовні межі v0, не відкалібровані.
+            * **Це не прогноз і не інвестиційна порада.** Індекс показує, наскільки незвичні сьогоднішні умови фінансування й найму порівняно з їхньою власною історією.
+            * **Джерела:** FRED (Federal Reserve Bank of St. Louis); Indeed Hiring Lab через FRED; Adzuna API. Спреди (ICE BofA, Moody's) показано лише як бали, не сирими значеннями, через умови їхніх ліцензій.
+            """)
+
+# ==========================================
 # МЕТОДОЛОГІЯ: ГОРИЗОНТ АВТОНОМНОСТІ ТА ACTION CIRCLE
 # ==========================================
 with st.expander(L["method_expander"]):
@@ -1114,7 +1280,7 @@ with st.expander(L["circle_method_expander"]):
         $$P_{out} = \frac{1}{M}\sum_{m=1}^{M} \frac{N_{out,m}}{N_{total,m}}$$
 
         * **$M$** — number of leading models: from each lab, the model with the highest Epoch Capabilities Index (ECI) among those with verified data; each model has equal weight. If the lab's strongest model has no data, the hover text says so.
-        * **$N_{out,m} / N_{total,m}$** — share of out-of-bounds actions of model $m$ in real-use data published by its developer (internal use, re-generation of real traffic).
+        * **$N_{out,m} / N_{total,m}$** — share of out-of-bounds actions of model $m$ in real-use data published by its developer (samples of internal use only; simulations and re-generated traffic are not used).
         * **Not used:** trap tests built to provoke violations; their construction cannot be checked from outside.
         * **Not counted:** false reports about the work (claiming a task is done when it is not) - these are not actions. Where the developer grades actions by severity (OpenAI: 0-4), levels 3 and above are counted: actions the user would not expect and would strongly object to. All of this is shown in the hover text.
         * **Verification:** a number appears only after a person has checked it against the page of the source.
@@ -1127,7 +1293,7 @@ with st.expander(L["circle_method_expander"]):
         $$P_{out} = \frac{1}{M}\sum_{m=1}^{M} \frac{N_{out,m}}{N_{total,m}}$$
 
         * **$M$** — кількість моделей-лідерів: від кожної лабораторії модель з найвищим індексом здатностей Epoch (ECI) серед тих, що мають підтверджені дані; кожна модель має рівну вагу. Якщо найсильніша модель лабораторії даних не має, це показано у спливаючому вікні.
-        * **$N_{out,m} / N_{total,m}$** — частка дій поза межами моделі $m$ у даних реальної роботи, опублікованих її розробником (внутрішнє використання, перегенерація реального трафіку).
+        * **$N_{out,m} / N_{total,m}$** — частка дій поза межами моделі $m$ у даних реальної роботи, опублікованих її розробником (лише вибірки внутрішнього використання; симуляції й перегенерація трафіку не використовуються).
         * **Не використовуються:** тести-пастки, побудовані, щоб спровокувати порушення; їх побудову неможливо перевірити ззовні.
         * **Не враховуються:** неправдиві звіти про роботу (модель каже, що завдання виконано, коли ні) - це не дії. Якщо розробник оцінює дії за шкалою серйозності (OpenAI: 0-4), зараховуються рівні 3 і вище: дії, яких користувач не очікував і проти яких рішуче заперечив би. Усе це показано у спливаючому вікні.
         * **Підтвердження:** число з'являється на колі лише після того, як людина звірила його зі сторінкою джерела.

@@ -1,0 +1,28 @@
+name: Bubble index - manual refresh
+
+# Лише ряди FRED і перерахунок індексу крихкості - без вакансій, ArXiv і Gemini.
+# Запуск: Actions -> «Bubble index - manual refresh» -> Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: FRED series
+        run: python -m collectors.fred_series
+      - name: Fragility index v0
+        if: ${{ !cancelled() }}
+        run: python -m metrics.bubble
