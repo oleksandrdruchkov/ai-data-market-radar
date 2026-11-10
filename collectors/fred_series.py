@@ -28,8 +28,7 @@ import csv
 import os
 from datetime import date
 
-import requests
-
+from core.http import get_with_retry
 from collectors._metric_series import MetricSeriesCollector, SeriesResult
 
 FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -86,9 +85,8 @@ class FredSeries(MetricSeriesCollector):
         return FIXED + indeed_series(regions)
 
     def download(self, series_id: str, since: date) -> str:
-        resp = requests.get(FRED_CSV, params={"id": series_id, "cosd": since.isoformat()},
-                            headers=HEADERS, timeout=60)
-        resp.raise_for_status()
+        resp = get_with_retry(FRED_CSV, params={"id": series_id, "cosd": since.isoformat()},
+                              headers=HEADERS, timeout=60)
         return resp.text
 
     def fetch_series(self) -> list[SeriesResult]:

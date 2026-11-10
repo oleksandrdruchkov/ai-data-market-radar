@@ -25,20 +25,10 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone, date
 
-import requests
-
+from core.http import get_with_retry, redact  # noqa: F401  (redact - для тестів і помилок)
 from collectors._metric_series import MetricSeriesCollector, SeriesResult
 
 API = "https://api.adzuna.com/v1/api/jobs/{cc}/search/1"
-
-
-def redact(text: str) -> str:
-    """Помилки requests містять URL з app_id/app_key - у журнал БД вони не мають потрапити."""
-    for name in ("ADZUNA_APP_ID", "ADZUNA_APP_KEY"):
-        secret = os.getenv(name, "").strip()
-        if secret:
-            text = text.replace(secret, "***")
-    return text
 
 
 def parse_count(payload: dict) -> int:
@@ -81,11 +71,10 @@ class AdzunaCounts(MetricSeriesCollector):
         app_key = os.getenv("ADZUNA_APP_KEY", "").strip()
         if not app_id or not app_key:
             raise RuntimeError("Не задано ADZUNA_APP_ID / ADZUNA_APP_KEY")
-        resp = requests.get(API.format(cc=cc),
+        resp = get_with_retry(API.format(cc=cc),
                             params={"app_id": app_id, "app_key": app_key, "results_per_page": 1,
                                     "what": query, "content-type": "application/json"},
                             timeout=20)
-        resp.raise_for_status()
         return parse_count(resp.json())
 
     def fetch_series(self) -> list[SeriesResult]:
