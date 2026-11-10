@@ -1169,20 +1169,30 @@ else:
             pc, pl = _zone(float(p["value"]))
             st.markdown(f"<div style='font-size:0.78rem;'><span style='color:{pc};font-weight:800;'>"
                         f"{float(p['value']):.0f}</span> · {en if is_en else ua}</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:0.7rem;color:#64748b;margin-top:6px;'>"
+                    + ("Each component 0-100: 0 = calm, 100 = maximum tension" if is_en
+                       else "Кожен складник 0-100: 0 = спокійно, 100 = максимальна напруга")
+                    + "</div>", unsafe_allow_html=True)
     with c2:
         fig_b = go.Figure()
         for lo, hi, zc, _, _ in BUBBLE_ZONES:
-            fig_b.add_hrect(y0=lo, y1=min(hi, 100), fillcolor=zc, opacity=0.06, line_width=0)
+            fig_b.add_hrect(y0=lo, y1=min(hi, 100), fillcolor=zc, opacity=0.10, line_width=0)
+        for lo, _, zc, _, _ in BUBBLE_ZONES[1:]:   # межі зон 40 і 70
+            fig_b.add_hline(y=lo, line_dash="dot", line_color=zc, line_width=1, opacity=0.6)
         fig_b.add_trace(go.Scatter(x=fr["period_start"], y=fr["value"], mode="lines",
                                    line=dict(color="#0f172a", width=1.6),
                                    hovertemplate="%{x|%Y-%m-%d}: %{y:.0f}<extra></extra>"))
+        fig_b.add_vrect(x0="2020-02-20", x1="2020-04-30", fillcolor="#94a3b8", opacity=0.12, line_width=0,
+                        annotation_text=("2020: COVID" if is_en else "2020: COVID"),
+                        annotation_position="top left", annotation_font_size=9)
         fig_b.add_vrect(x0="2022-01-01", x1="2022-12-31", fillcolor="#94a3b8", opacity=0.12, line_width=0,
                         annotation_text=("2022: tech correction" if is_en else "2022: корекція техсектору"),
                         annotation_position="top left", annotation_font_size=9)
         fig_b.update_layout(height=300, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-                            margin=dict(l=10, r=10, t=20, b=10), showlegend=False,
+                            margin=dict(l=35, r=10, t=20, b=30), showlegend=False,
                             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-                            yaxis=dict(range=[0, 100], gridcolor="#f1f5f9"), xaxis=dict(gridcolor="#f1f5f9"))
+                            yaxis=dict(range=[0, 100], gridcolor="#f1f5f9", tickvals=[0, 20, 40, 60, 70, 80, 100]),
+                            xaxis=dict(gridcolor="#f1f5f9"))
         st.plotly_chart(fig_b, use_container_width=True, theme=None, config={'displayModeBar': False})
 
     # --- Міст до SAI: люди
