@@ -75,7 +75,11 @@ class PgDb(Db):
                           f"jsonb_populate_recordset(NULL::{table}, {_lit(payload)}::jsonb) RETURNING *")
 
     def update(self, table, values, *, eq):
-        sets = ", ".join(f"{k} = {'NULL' if v is None else _lit(v)}" for k, v in values.items())
+        def val(v):
+            if v is None:
+                return "NULL"
+            return _lit(json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else v)
+        sets = ", ".join(f"{k} = {val(v)}" for k, v in values.items())
         where = " AND ".join(f"{k} = {_lit(v)}" for k, v in eq.items())
         return self._dml(f"UPDATE {table} SET {sets} WHERE {where} RETURNING *")
 

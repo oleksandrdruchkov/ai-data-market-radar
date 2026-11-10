@@ -941,6 +941,7 @@ def _pct(x, digits=2):
 def _method_label(m):
     labels = {
         "internal_use_sample": ("sample of real internal use", "вибірка реального внутрішнього використання"),
+        # deployment_simulation на коло більше не потрапляє (sql/013) - лишено для старих підписів
         "deployment_simulation": ("re-generation of real traffic", "перегенерація реального трафіку"),
     }
     en, ua = labels.get(m, (m, m))
@@ -1060,6 +1061,10 @@ if not df_lead_pending.empty:
         (f"⏳ {len(df_lead_pending)} record(s) awaiting human verification are not shown." if is_en
          else f"⏳ {len(df_lead_pending)} запис(и) чекають на підтвердження людиною і на колі не показані.")
     )
+    try:   # сторінка перевірки (pages/review.py), вхід за паролем
+        st.page_link("pages/review.py", label="🔒 Review (password)" if is_en else "🔒 Перевірити (за паролем)")
+    except Exception:
+        pass
 
 # ==========================================
 # МЕТОДОЛОГІЯ: ГОРИЗОНТ АВТОНОМНОСТІ ТА ACTION CIRCLE
