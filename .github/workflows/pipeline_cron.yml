@@ -84,6 +84,21 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m metrics.bubble
 
+      # ---------- Ринкові сигнали учасників перегонів (sql/015, sql/016) ----------
+      # Офіційні безкоштовні API SEC EDGAR, без Gemini.
+
+      - name: Market - SEC financials (виручка, капвитрати, R&D)
+        if: ${{ !cancelled() }}
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -m collectors.sec_financials
+
+      - name: Market - SEC filings (IPO, 8-K, 13D/G)
+        if: ${{ !cancelled() }}
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -m collectors.sec_filings
+
       # ---------- Показники ----------
 
       - name: Metrics - autonomy (T50 frontier, SAI_T)

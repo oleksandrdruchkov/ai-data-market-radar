@@ -58,7 +58,7 @@ class SecFilings(BaseCollector):
             "description": p["description"],
             "source_url": filing_url(p["cik"], p["accn"]),
             "event_date": p["filed"],
-            "extraction_method": "sec_submissions",
+            "extraction_method": "rule",
         }
 
 

@@ -16,6 +16,8 @@ from pathlib import Path
 
 import requests
 
+from core.http import get_with_retry
+
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
@@ -33,7 +35,7 @@ METRICS: dict[str, list[str]] = {
     "cash": ["CashAndCashEquivalentsAtCarryingValue"],
 }
 INSTANT_METRICS = {"cash"}          # залишок на дату, а не потік за період
-SINCE = date(2019, 1, 1)
+SINCE = date.fromisoformat(os.getenv("SEC_BACKFILL_START", "2021-01-01"))
 
 QUARTER_MIN, QUARTER_MAX = 80, 100  # тривалість кварталу в днях
 
@@ -88,23 +90,18 @@ class SecClient:
         ua = user_agent or os.environ.get("SEC_USER_AGENT")
         if not ua or "@" not in ua:
             raise RuntimeError("SEC_USER_AGENT має містити назву і контактний e-mail (вимога SEC)")
-        self.s = requests.Session()
-        self.s.headers.update({"User-Agent": ua, "Accept-Encoding": "gzip, deflate"})
+        self.headers = {"User-Agent": ua, "Accept-Encoding": "gzip, deflate"}
         self.pause = pause
 
-    def get_json(self, url: str, tries: int = 3) -> dict | None:
-        for attempt in range(tries):
-            time.sleep(self.pause)
-            r = self.s.get(url, timeout=60)
-            if r.status_code == 404:
+    def get_json(self, url: str) -> dict | None:
+        """GET з повторами каркаса (429/5xx/обрив). 404 = у компанії немає таких даних."""
+        time.sleep(self.pause)   # ліміт SEC - 10 запитів/с
+        try:
+            return get_with_retry(url, headers=self.headers, timeout=60).json()
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
                 return None
-            if r.status_code in (429, 500, 502, 503, 504):
-                time.sleep(2 ** attempt * 2)
-                continue
-            r.raise_for_status()
-            return r.json()
-        r.raise_for_status()
-        return None
+            raise
 
 
 def resolve_ciks(tickers_json: dict, companies: list[Company]) -> tuple[dict[str, int], list[str]]:
