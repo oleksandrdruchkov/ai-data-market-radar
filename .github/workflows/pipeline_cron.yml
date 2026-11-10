@@ -80,6 +80,10 @@ jobs:
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
         run: python -m collectors.adzuna_counts
 
+      - name: Bubble - fragility index v0 (metrics/bubble.py)
+        if: ${{ !cancelled() }}
+        run: python -m metrics.bubble
+
       # ---------- Показники ----------
 
       - name: Metrics - autonomy (T50 frontier, SAI_T)
