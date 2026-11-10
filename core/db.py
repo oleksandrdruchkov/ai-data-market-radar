@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from .http import redact
+
 log = logging.getLogger("radar.db")
 
 BATCH = 100
@@ -135,7 +137,7 @@ class Db:
             "llm_calls": stats.get("llm_calls", 0),
             "llm_fallbacks": stats.get("llm_fallbacks", 0),
             "llm_cache_hits": stats.get("llm_cache_hits", 0),
-            "error": (error or "")[:2000] or None,
+            "error": (redact(error) or "")[:2000] or None,
         }, eq={"run_id": run_id})
 
     def recent_runs(self, source: str, limit: int = 10) -> list[dict]:
@@ -159,7 +161,7 @@ class Db:
         return int(row["raw_id"]), bool(row["is_new"])
 
     def set_raw_status(self, raw_id: int, status: str, error: str | None = None) -> None:
-        values = {"status": status, "error": (error or "")[:2000] or None}
+        values = {"status": status, "error": (redact(error) or "")[:2000] or None}
         if status == "processed":
             values["processed_at"] = iso(utcnow())
         self.update("raw_items", values, eq={"raw_id": raw_id})
@@ -184,6 +186,6 @@ class Db:
     # ---------- якість ----------
 
     def insert_alerts(self, alerts: Iterable[dict]) -> None:
-        alerts = list(alerts)
+        alerts = [dict(a, message=redact(a.get("message"))) for a in alerts]
         if alerts:
             self.insert("ops_quality_alerts", alerts)

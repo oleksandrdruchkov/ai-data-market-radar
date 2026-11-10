@@ -167,7 +167,8 @@ def test_adzuna(db, monkeypatch):
                  "created": "2026-11-06T10:00:00Z", "salary_min": 120000, "salary_is_predicted": "1",
                  "redirect_url": "https://www.adzuna.com/details/111"}]}
 
-    monkeypatch.setattr(jobs_adzuna.requests, "get", lambda *a, **k: Resp())
+    from core import http
+    monkeypatch.setattr(http.requests, "get", lambda *a, **k: Resp())     # запити йдуть через core.http
     good = {**GOOD, "track": "Data Engineering", "experience_level": "Not Specified",
             "skills": [{"name": "Python", "category": "Language"}]}
     stats = jobs_adzuna.AdzunaJobs(db=db, llm=ScriptedLlm(db, {"m1": good})).run()

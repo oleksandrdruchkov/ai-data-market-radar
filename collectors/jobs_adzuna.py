@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import os
 
-import requests
-
 from core import RawItem
+from core.http import get_with_retry
 from collectors._jobs_common import JobsCollector
 
 PROMPT_VERSION = "vacancy_v2"
@@ -49,13 +48,13 @@ class AdzunaJobs(JobsCollector):
         per_page = int(os.getenv("ADZUNA_PER_PAGE", "20"))
 
         for m in _markets():
-            resp = requests.get(
+            resp = get_with_retry(        # 503/429 від Adzuna - повтор через 5 і 15 с
                 f"https://api.adzuna.com/v1/api/jobs/{m['country_code']}/search/1",
                 params={"app_id": app_id, "app_key": app_key, "results_per_page": per_page,
                         "what": query, "content-type": "application/json"},
                 timeout=20,
             )
-            resp.raise_for_status()   # помилка ринку = помилка fetch, а не тихі 0 записів
+            # після всіх спроб помилка ринку = помилка fetch, а не тихі 0 записів
             results = resp.json().get("results", [])
             self.log.info(f"Adzuna {m['country_code'].upper()}: {len(results)} вакансій")
             for item in results:
