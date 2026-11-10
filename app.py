@@ -184,6 +184,14 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
+# Сторінка перевірки записів кола лідерів (вхід за паролем): ?review=1
+# Відкривається тут же, щоб не залежати від того, чи Streamlit підхопив pages/review.py.
+if st.query_params.get("review"):
+    import review_ui
+    from core.db import Db
+    review_ui.render(Db(client=supabase))
+    st.stop()
+
 @st.cache_data(ttl=120)
 def load_data():
     try:
@@ -1061,10 +1069,9 @@ if not df_lead_pending.empty:
         (f"⏳ {len(df_lead_pending)} record(s) awaiting human verification are not shown." if is_en
          else f"⏳ {len(df_lead_pending)} запис(и) чекають на підтвердження людиною і на колі не показані.")
     )
-    try:   # сторінка перевірки (pages/review.py), вхід за паролем
-        st.page_link("pages/review.py", label="🔒 Review (password)" if is_en else "🔒 Перевірити (за паролем)")
-    except Exception:
-        pass
+
+# Вхід на сторінку перевірки - завжди видно (і коли черга порожня: там же «Останні рішення»)
+st.markdown("[🔒 Review records (password)](?review=1)" if is_en else "[🔒 Перевірити записи (за паролем)](?review=1)")
 
 # ==========================================
 # МЕТОДОЛОГІЯ: ГОРИЗОНТ АВТОНОМНОСТІ ТА ACTION CIRCLE
