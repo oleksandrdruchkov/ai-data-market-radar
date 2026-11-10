@@ -2,7 +2,7 @@
 
 IPO (S-1, 424B4), повторні розміщення (S-3, 424B5), звіти (10-Q/10-K/20-F),
 поточні події 8-K з номерами пунктів (1.05 кіберінцидент, 5.02 зміни керівництва ...),
-частки великих власників (13D/13G), дані для голосування (DEF 14A), угоди інсайдерів (Форма 4).
+частки великих власників (13D/13G), дані для голосування (DEF 14A).
 
 Це стрічка подій для подальшого аналізу реакції ринку (event study).
 LLM не використовується: метадані подань структуровані.
@@ -14,7 +14,7 @@ import logging
 from core import BaseCollector, RawItem
 
 from collectors._sec_common import (SUBMISSIONS_URL, TICKERS_URL, SecClient, filing_url,
-                                    load_companies, recent_filings, resolve_ciks)
+                                    load_companies, recent_cutoff, recent_filings, resolve_ciks)
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ class SecFilings(BaseCollector):
     source = "sec_filings"
     fact_table = "fct_lab_filings"
     tracks_presence = False
+    allow_empty = True
 
     def fetch(self):
         sec = SecClient()
@@ -37,7 +38,7 @@ class SecFilings(BaseCollector):
             if not subs:
                 log.warning("%s: submissions порожні", ticker)
                 continue
-            for f in recent_filings(subs):
+            for f in recent_filings(subs, since=recent_cutoff()):
                 yield RawItem(external_id=f"{ticker}:{f['accn']}", payload={
                     **f, "ticker": ticker, "cik": cik, "label": c.label, "role": c.role,
                 })

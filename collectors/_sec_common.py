@@ -37,6 +37,18 @@ METRICS: dict[str, list[str]] = {
 INSTANT_METRICS = {"cash"}          # залишок на дату, а не потік за період
 SINCE = date.fromisoformat(os.getenv("SEC_BACKFILL_START", "2021-01-01"))
 
+# Щоденний запуск бере лише подання за останні N днів: історія вже в базі,
+# а повторне проходження тисяч старих записів займало ~30 хв. 0 = повне завантаження з SINCE.
+RECENT_DAYS = int(os.getenv("SEC_RECENT_DAYS", "45"))
+
+
+def recent_cutoff(today: date | None = None, days: int | None = None) -> date:
+    days = RECENT_DAYS if days is None else days
+    if days <= 0:
+        return SINCE
+    return max(SINCE, (today or date.today()) - timedelta(days=days))
+
+
 QUARTER_MIN, QUARTER_MAX = 80, 100  # тривалість кварталу в днях
 
 # Форми, що цікавлять радар
@@ -50,7 +62,8 @@ FILING_FORMS = {
     "SCHEDULE 13D": "ownership", "SCHEDULE 13D/A": "ownership",
     "SCHEDULE 13G": "ownership", "SCHEDULE 13G/A": "ownership",
     "DEF 14A": "governance",
-    "4": "insider",
+    # Форма 4 (угоди інсайдерів) свідомо не збирається: ~3/4 усіх подань великих компаній,
+    # а сигнал слабкий. Стара історія лишається в таблиці з category = insider.
 }
 
 # Пункти 8-K, важливі для радара (офіційна нумерація форми 8-K)

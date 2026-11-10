@@ -12,7 +12,7 @@ import logging
 from core import BaseCollector, RawItem
 
 from collectors._sec_common import (FACTS_URL, TICKERS_URL, SecClient, extract_metrics,
-                                    filing_url, load_companies, resolve_ciks)
+                                    filing_url, load_companies, recent_cutoff, resolve_ciks)
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ class SecFinancials(BaseCollector):
     source = "sec_financials"
     fact_table = "fct_lab_financials"
     tracks_presence = False          # SEC не видаляє дані; закривати факти нема підстав
+    allow_empty = True               # між сезонами звітності нових подань може не бути
 
     def fetch(self):
         sec = SecClient()
@@ -29,6 +30,7 @@ class SecFinancials(BaseCollector):
         for msg in skipped:
             log.info("пропущено %s", msg)
 
+        cutoff = recent_cutoff().isoformat()
         for ticker, cik in ciks.items():
             c = companies[ticker]
             facts = sec.get_json(FACTS_URL.format(cik=cik))
@@ -36,6 +38,8 @@ class SecFinancials(BaseCollector):
                 log.warning("%s: companyfacts порожні", ticker)
                 continue
             for row in extract_metrics(facts):
+                if row["filed"] < cutoff:      # перерахунки старих періодів приходять з новою датою подання
+                    continue
                 ext_id = f"{ticker}:{row['metric']}:{row['period_type']}:{row['period_end']}"
                 yield RawItem(external_id=ext_id, payload={
                     **row, "ticker": ticker, "cik": cik, "label": c.label, "role": c.role,

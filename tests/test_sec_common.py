@@ -3,8 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from collectors._sec_common import (Company, extract_metrics, load_companies, quarterly_series,
-                                    recent_filings, resolve_ciks)
+from datetime import date
+
+from collectors._sec_common import (SINCE, Company, extract_metrics, load_companies, quarterly_series,
+                                    recent_cutoff, recent_filings, resolve_ciks)
 
 
 def f(start, end, val, filed, form="10-Q", accn="0000000000-26-000001"):
@@ -119,3 +121,13 @@ def test_seed_file_is_valid():
     cs = load_companies()
     assert {c.role for c in cs} <= {"lab", "backer", "supplier"}
     assert len({c.ticker for c in cs}) == len(cs)
+
+
+def test_recent_cutoff():
+    assert recent_cutoff(date(2026, 11, 10), 45) == date(2026, 9, 26)
+    assert recent_cutoff(date(2026, 11, 10), 0) == SINCE
+
+
+def test_form4_not_collected():
+    subs = {"filings": {"recent": {"accessionNumber": ["a"], "form": ["4"], "filingDate": ["2026-10-01"]}}}
+    assert recent_filings(subs) == []
