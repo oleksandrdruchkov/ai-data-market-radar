@@ -1,0 +1,24 @@
+{
+  "_comment": "Учасники перегонів моделей-лідерів, що звітують перед SEC. name_must_contain - захист від чужої компанії з тим самим тикером. Нова компанія після IPO - просто додати рядок.",
+  "companies": [
+    {"ticker": "GOOGL", "name_must_contain": "ALPHABET",  "label": "Alphabet (Google DeepMind)", "role": "lab",
+     "note": "консолідовані дані всього Alphabet, не лише ШІ"},
+    {"ticker": "META",  "name_must_contain": "META PLATFORMS", "label": "Meta", "role": "lab",
+     "note": "консолідовані дані, включно з соцмережами"},
+    {"ticker": "SPCX",  "name_must_contain": "SPACE EXPLORATION", "label": "SpaceX (з xAI після злиття лютого 2026)", "role": "lab",
+     "note": "включає ракети, Starlink і X"},
+    {"ticker": "ANT",   "name_must_contain": "ANTHROPIC", "label": "Anthropic", "role": "lab",
+     "note": "з'явиться після лістингу; до того збирач пропускає"},
+    {"ticker": "BABA",  "name_must_contain": "ALIBABA",   "label": "Alibaba (Qwen)", "role": "lab",
+     "note": "іноземний емітент: 20-F раз на рік, квартальних XBRL немає"},
+    {"ticker": "MSFT",  "name_must_contain": "MICROSOFT", "label": "Microsoft", "role": "backer",
+     "note": "партнер і акціонер OpenAI; фінансовий рік закінчується в червні"},
+    {"ticker": "AMZN",  "name_must_contain": "AMAZON",    "label": "Amazon", "role": "backer",
+     "note": "акціонер Anthropic, постачальник обчислень"},
+    {"ticker": "NVDA",  "name_must_contain": "NVIDIA",    "label": "Nvidia", "role": "supplier",
+     "note": "виручка = обчислення, продані всім учасникам; фінансовий рік закінчується наприкінці січня"}
+  ],
+  "pending_not_listed": [
+    {"label": "OpenAI", "status": "конфіденційний S-1 (травень-червень 2026), дати лістингу немає; додати рядок, коли з'явиться тикер"}
+  ]
+}
