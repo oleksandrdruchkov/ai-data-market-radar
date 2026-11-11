@@ -5,17 +5,19 @@ metrics/funding_ladder.py
 Звідки компанії беруть гроші на будівництво обчислень - сходинки від безпечної до крихкої:
   0  власні кошти        капвитрати за 4 квартали <= грошовий потік від основної діяльності
   1  запаси              капвитрати > грошового потоку (різницю покривають накопиченим)
-  2  борг               надходження від боргу >= DEBT_SHARE капвитрат за 4 квартали
+  2  борг               ЧИСТИЙ новий борг (залучено мінус погашено) >= DEBT_SHARE капвитрат за 4 квартали;
+                         перекредитування старого боргу не рахується
   3  кредит постачальника системний сигнал з боку Nvidia: дебіторська заборгованість або запаси
-                         ростуть швидше за виручку більш ніж на VENDOR_GAP_PP в.п. (клієнти платять
-                         повільніше / попит слабшає)
-  4  гроші населення     IPO (S-1, F-1, 424B4) за останні 365 днів або надходження від емісії акцій
-                         >= EQUITY_SHARE капвитрат за 4 квартали
+                         відносно квартальної виручки зросли за рік більш ніж на VENDOR_RATIO_PCT %
+                         (клієнти платять повільніше / попит слабшає)
+  4  гроші населення     IPO (S-1, F-1, 424B4) за останні 365 днів або ЧИСТА емісія акцій
+                         (продано мінус викуплено) >= EQUITY_SHARE капвитрат за 4 квартали
 Сходинка компанії = найвища, умова якої виконана (сходинки не обов'язково проходять по черзі).
 
 Публікується лише найвищий показник серед лабораторій-лідерів (role = 'lab'):
   funding_ladder_rung        найвища сходинка серед лабораторій, з урахуванням сходинки 3 (Nvidia)
   funding_ladder_capex_ocf   найвище відношення капвитрати / грошовий потік серед лабораторій
+  funding_ladder_vendor_gap  Nvidia: найбільша зміна (дебіторка або запаси) / виручка за рік, %
 Розрахунок по кожній компанії зберігається для перевірки (region = тикер), на табло не виводиться:
   funding_ladder_rung_company
 
@@ -45,11 +47,11 @@ START = date(2022, 1, 31)
 
 DEBT_SHARE = 0.10        # борг >= 10 % капвитрат за 4 квартали
 EQUITY_SHARE = 0.05      # емісія акцій >= 5 % капвитрат за 4 квартали
-VENDOR_GAP_PP = 20.0     # Nvidia: ріст дебіторки/запасів мінус ріст виручки, в.п. рік до року
+VENDOR_RATIO_PCT = 25.0  # Nvidia: (дебіторка або запаси) / виручка кварталу виросли за рік більш ніж на 25 %
 IPO_WINDOW_DAYS = 365
 MAX_TTM_SPAN_DAYS = 460  # 4 квартали мають вкладатися в ~15 місяців, інакше є діра у звітах
 IPO_FORMS = {"S-1", "S-1/A", "F-1", "F-1/A", "424B4", "424B1"}
-FLOWS = ("capex", "ocf", "debt_issued", "equity_issued", "revenue")
+FLOWS = ("capex", "ocf", "debt_issued", "debt_repaid", "equity_issued", "buybacks", "revenue")
 
 RUNG_LABELS = {0: ("own funds", "власні кошти"), 1: ("drawing reserves", "проїдають запаси"),
                2: ("debt", "борг"), 3: ("vendor credit", "кредит постачальника"),
@@ -110,44 +112,52 @@ def company_rung(ttm: Ttm | None, ipo_recent: bool) -> tuple[int | None, float |
     r = 0
     if ocf is not None and (ocf <= 0 or capex > ocf):
         r = 1
-    if capex > 0 and v.get("debt_issued", 0) >= DEBT_SHARE * capex:
+    net_debt = v.get("debt_issued", 0) - abs(v.get("debt_repaid", 0))
+    net_equity = v.get("equity_issued", 0) - abs(v.get("buybacks", 0))
+    if capex > 0 and net_debt >= DEBT_SHARE * capex:
         r = 2
-    if capex > 0 and v.get("equity_issued", 0) >= EQUITY_SHARE * capex:
+    if capex > 0 and net_equity >= EQUITY_SHARE * capex:
         r = 4
     if ocf is None and r == 0:
         return rung, ratio            # без грошового потоку сходинку 0 не стверджуємо
     return max(r, rung or 0), ratio
 
 
-def _yoy(series: pd.DataFrame, asof: date) -> float | None:
-    """Ріст останнього відомого значення рік до року, %. series: period_end, value, filed_date."""
-    s = series[series["filed_date"] <= asof].sort_values("period_end")
-    if s.empty:
+def _ratio_change(num: pd.DataFrame, rev: pd.DataFrame, asof: date) -> float | None:
+    """Зміна відношення залишок / виручка кварталу за рік, %. Відношення, а не різниця темпів росту:
+    при вибуховому рості виручки різниця темпів дає хибні сплески."""
+    num = num[num["filed_date"] <= asof]
+    rev = rev[rev["filed_date"] <= asof]
+    if num.empty or rev.empty:
         return None
-    last = s.iloc[-1]
-    target = last["period_end"] - timedelta(days=365)
-    prev = s[(s["period_end"] - target).abs() <= pd.Timedelta(days=20)]
-    if prev.empty or float(prev.iloc[-1]["value"]) == 0:
+    ratios = {}
+    for _, r in num.iterrows():
+        m = rev[(rev["period_end"] - r["period_end"]).abs() <= pd.Timedelta(days=7)]
+        if len(m) and float(m.iloc[0]["value"]) > 0:
+            ratios[r["period_end"]] = float(r["value"]) / float(m.iloc[0]["value"])
+    if not ratios:
         return None
-    return 100.0 * (float(last["value"]) / float(prev.iloc[-1]["value"]) - 1.0)
+    last = max(ratios)
+    prev = [d for d in ratios if abs((last - timedelta(days=365) - d).days) <= 20]
+    if not prev or ratios[prev[0]] == 0:
+        return None
+    return 100.0 * (ratios[last] / ratios[prev[0]] - 1.0)
 
 
 def vendor_stress(fin: pd.DataFrame, asof: date, ticker: str = "NVDA") -> tuple[bool | None, float | None]:
-    """(сигнал, найбільший розрив в.п.). Порівнюється ріст дебіторки й запасів з ростом виручки
-    за квартал рік до року."""
+    """(сигнал, найбільша зміна %). Дебіторка й запаси в днях виручки: якщо ростуть швидше
+    за продажі - клієнти платять повільніше або склад затоварюється."""
     f = fin[fin["ticker"] == ticker]
-    rev = _yoy(f[(f["metric"] == "revenue") & (f["period_type"] == "quarter")], asof)
-    if rev is None:
-        return None, None
-    gaps = []
+    rev = f[(f["metric"] == "revenue") & (f["period_type"] == "quarter")]
+    changes = []
     for m in ("receivables", "inventory"):
-        g = _yoy(f[(f["metric"] == m) & (f["period_type"] == "instant")], asof)
-        if g is not None:
-            gaps.append(g - rev)
-    if not gaps:
+        c = _ratio_change(f[(f["metric"] == m) & (f["period_type"] == "instant")], rev, asof)
+        if c is not None:
+            changes.append(c)
+    if not changes:
         return None, None
-    worst = max(gaps)
-    return worst > VENDOR_GAP_PP, round(worst, 1)
+    worst = max(changes)
+    return worst > VENDOR_RATIO_PCT, round(worst, 1)
 
 
 def asof_dates(today: date, start: date = START) -> list[date]:

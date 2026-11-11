@@ -39,6 +39,7 @@ METRICS: dict[str, list[str]] = {
                     "ProceedsFromIssuanceOfSeniorLongTermDebt", "ProceedsFromDebtNetOfIssuanceCosts"],
     "equity_issued": ["ProceedsFromIssuanceOfCommonStock", "ProceedsFromIssuanceInitialPublicOffering",
                       "ProceedsFromIssuanceOrSaleOfEquity"],
+    "debt_repaid": ["RepaymentsOfLongTermDebt", "RepaymentsOfDebt", "RepaymentsOfSeniorDebt"],
     "buybacks": ["PaymentsForRepurchaseOfCommonStock"],
     "receivables": ["AccountsReceivableNetCurrent"],
     "inventory": ["InventoryNet"],
@@ -145,8 +146,11 @@ def _d(s: str) -> date:
     return date.fromisoformat(s)
 
 
-def _latest_by_period(entries: list[dict], instant: bool) -> dict[tuple, dict]:
-    """Один запис на період; при повторах (порівняльні дані, перерахунки) - найпізніше поданий."""
+def _first_by_period(entries: list[dict], instant: bool) -> dict[tuple, dict]:
+    """Один запис на період - з НАЙРАНІШОГО звіту, де він з'явився.
+    Той самий квартал повторюється як порівняльні дані у звіті наступного року; якщо брати
+    пізніший, дата подання зсувається на рік уперед і розрахунки «на дату» бачать дані запізно.
+    Ціна: рідкісні перерахунки (restatement) не враховуються - беремо те, що було відомо тоді."""
     out: dict[tuple, dict] = {}
     for e in entries:
         if e.get("form") not in ("10-Q", "10-K", "20-F", "10-K/A", "10-Q/A", "20-F/A"):
@@ -154,7 +158,7 @@ def _latest_by_period(entries: list[dict], instant: bool) -> dict[tuple, dict]:
         key = (e["end"],) if instant else (e.get("start"), e["end"])
         if not instant and not e.get("start"):
             continue
-        if key not in out or e["filed"] > out[key]["filed"]:
+        if key not in out or e["filed"] < out[key]["filed"]:
             out[key] = e
     return out
 
@@ -166,7 +170,7 @@ def quarterly_series(entries: list[dict], instant: bool = False) -> list[dict]:
     а 10-K - за рік. Квартал = пряме значення (80-100 днів), або різниця двох
     накопичувальних сум з однаковою датою початку, що відрізняються на один квартал.
     """
-    facts = _latest_by_period(entries, instant)
+    facts = _first_by_period(entries, instant)
     rows: dict[str, dict] = {}
 
     if instant:

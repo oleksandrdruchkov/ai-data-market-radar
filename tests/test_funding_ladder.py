@@ -29,7 +29,11 @@ def test_rungs_by_rule():
     assert company_rung(Ttm({"capex": 120, "ocf": 100}), False)[0] == 1
     assert company_rung(Ttm({"capex": 50, "ocf": -10}), False)[0] == 1
     assert company_rung(Ttm({"capex": 50, "ocf": 100, "debt_issued": 6}), False)[0] == 2
+    # перекредитування: залучили 30, погасили 28 -> чистий борг 2 < 10 % капвитрат
+    assert company_rung(Ttm({"capex": 50, "ocf": 100, "debt_issued": 30, "debt_repaid": 28}), False)[0] == 0
     assert company_rung(Ttm({"capex": 50, "ocf": 100, "equity_issued": 3}), False)[0] == 4
+    # продали акцій працівникам на 3, викупили на 20 -> не залучення грошей населення
+    assert company_rung(Ttm({"capex": 50, "ocf": 100, "equity_issued": 3, "buybacks": 20}), False)[0] == 0
     assert company_rung(None, True) == (4, None)
     assert company_rung(None, False) == (None, None)
     assert company_rung(Ttm({"capex": 50}), False) == (None, None)   # без грошового потоку 0 не стверджуємо
@@ -43,12 +47,17 @@ def test_ttm_no_lookahead():
     assert t.values["capex"] == 40 and t.asof_period == "2025-12-31"
 
 
-def test_vendor_stress():
-    rows = fin_rows("NVDA", [("2024-12-31", {"revenue": 100, "receivables": 50}),
+def test_vendor_stress_ratio_not_growth_gap():
+    # виручка x3, дебіторка x3 - вибуховий ріст, але днів виручки стільки ж -> сигналу немає
+    boom = fin_rows("NVDA", [("2024-12-31", {"revenue": 100, "receivables": 50}),
+                             ("2025-12-31", {"revenue": 300, "receivables": 150})], role="supplier")
+    assert vendor_stress(df(boom), date(2026, 3, 1)) == (False, 0.0)
+    # виручка +10 %, дебіторка +60 % -> відношення +45 %
+    slow = fin_rows("NVDA", [("2024-12-31", {"revenue": 100, "receivables": 50}),
                              ("2025-12-31", {"revenue": 110, "receivables": 80})], role="supplier")
-    stress, gap = vendor_stress(df(rows), date(2026, 3, 1))
-    assert stress is True and gap == 50.0          # +60 % дебіторки проти +10 % виручки
-    assert vendor_stress(df(rows), date(2025, 1, 1)) == (None, None)
+    stress, chg = vendor_stress(df(slow), date(2026, 3, 1))
+    assert stress is True and chg == 45.5
+    assert vendor_stress(df(slow), date(2025, 1, 1)) == (None, None)
 
 
 def test_build_rows_publishes_max_only_for_labs():

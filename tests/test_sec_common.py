@@ -34,15 +34,15 @@ def test_ytd_cashflow_becomes_quarters():
     assert years[0]["value"] == 70
 
 
-def test_direct_quarter_wins_and_latest_filing_wins():
+def test_direct_quarter_wins_and_first_filing_wins():
     entries = [
         f("2025-04-01", "2025-06-30", 100, "2025-07-25"),
-        f("2025-04-01", "2025-06-30", 105, "2026-07-25"),   # перераховано в наступному році
+        f("2025-04-01", "2025-06-30", 105, "2026-07-25"),   # порівняльні дані наступного року - не беремо
         f("2025-01-01", "2025-06-30", 999, "2025-07-25"),   # накопичувальне - не має перебити пряме
         f("2025-01-01", "2025-03-31", 1, "2025-04-25"),
     ]
     q = quarters(quarterly_series(entries))
-    assert q["2025-06-30"]["value"] == 105
+    assert q["2025-06-30"]["value"] == 100 and q["2025-06-30"]["filed"] == "2025-07-25"
     assert q["2025-06-30"]["derived"] is False
 
 
