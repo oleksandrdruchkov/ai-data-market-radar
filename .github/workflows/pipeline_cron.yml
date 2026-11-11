@@ -99,6 +99,10 @@ jobs:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: python -m collectors.sec_filings
 
+      - name: Market - funding ladder (metrics/funding_ladder.py)
+        if: ${{ !cancelled() }}
+        run: python -m metrics.funding_ladder
+
       # ---------- Показники ----------
 
       - name: Metrics - autonomy (T50 frontier, SAI_T)

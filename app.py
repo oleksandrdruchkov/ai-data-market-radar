@@ -1195,6 +1195,67 @@ else:
                             xaxis=dict(gridcolor="#f1f5f9"))
         st.plotly_chart(fig_b, use_container_width=True, theme=None, config={'displayModeBar': False})
 
+    # --- Драбина фінансування перегонів (metrics/funding_ladder.py, дані SEC)
+    LADDER = [("own funds", "власні кошти"), ("drawing reserves", "проїдають запаси"), ("debt", "борг"),
+              ("vendor credit", "кредит постачальника"), ("public money", "гроші населення")]
+    LADDER_COLORS = ["#16a34a", "#65a30d", "#d97706", "#ea580c", "#dc2626"]
+    try:
+        lad = _fetch_series("funding_ladder_rung", "GLOBAL")
+        lad_ratio = _fetch_series("funding_ladder_capex_ocf", "GLOBAL")
+    except Exception as ex:
+        lad, lad_ratio = pd.DataFrame(), pd.DataFrame()
+        st.caption(f"⚠️ ladder: {str(ex)[:200]}")
+    st.markdown("<div style='font-weight:700; font-size:0.9rem; color:#0f172a; margin:6px 0;'>"
+                + ("Funding ladder: where the leaders get money for compute" if is_en
+                   else "Драбина фінансування: звідки лідери беруть гроші на обчислення") + "</div>",
+                unsafe_allow_html=True)
+    if lad.empty:
+        st.caption("The ladder will appear after metrics/funding_ladder.py runs." if is_en
+                   else "Драбина з'явиться після розрахунку metrics/funding_ladder.py.")
+    else:
+        lad["period_start"] = pd.to_datetime(lad["period_start"])
+        lad["value"] = lad["value"].astype(int)
+        cur_l = lad.iloc[-1]
+        rung = int(cur_l["value"])
+        l1, l2 = st.columns([1, 3])
+        with l1:
+            steps_html = "".join(
+                f"<div style='font-size:0.75rem;padding:2px 6px;margin:1px 0;border-radius:4px;"
+                f"{'background:' + LADDER_COLORS[i] + ';color:#fff;font-weight:800;' if i == rung else 'color:#64748b;'}'>"
+                f"{i} · {LADDER[i][0] if is_en else LADDER[i][1]}</div>"
+                for i in range(4, -1, -1))
+            ratio_txt = ""
+            if not lad_ratio.empty:
+                rv = float(lad_ratio.iloc[-1]["value"])
+                ratio_txt = (f"<div style='font-size:0.7rem;color:#64748b;margin-top:6px;'>"
+                             + (f"Capex / operating cash flow (max): <b>{rv:.2f}</b>" if is_en
+                                else f"Капвитрати / грошовий потік (найвище): <b>{rv:.2f}</b>") + "</div>")
+            st.markdown(
+                f"<div style='background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:12px;'>"
+                f"<div style='font-size:0.7rem;color:#64748b;font-weight:700;text-transform:uppercase;'>"
+                f"{'Rung' if is_en else 'Сходинка'} · {cur_l['period_start'].date()}</div>"
+                + steps_html + ratio_txt +
+                f"<div style='font-size:0.7rem;color:#64748b;margin-top:4px;'>"
+                + (f"labs with data: {int(cur_l['numerator'])} of {int(cur_l['denominator'])}" if is_en
+                   else f"лабораторій з даними: {int(cur_l['numerator'])} з {int(cur_l['denominator'])}")
+                + "</div></div>", unsafe_allow_html=True)
+        with l2:
+            fig_l = go.Figure(go.Scatter(x=lad["period_start"], y=lad["value"], mode="lines+markers",
+                                         line=dict(color="#0f172a", width=1.6, shape="hv"), marker=dict(size=4),
+                                         hovertemplate="%{x|%Y-%m}: %{y}<extra></extra>"))
+            fig_l.update_layout(height=220, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                                margin=dict(l=130, r=10, t=10, b=30), showlegend=False,
+                                font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+                                yaxis=dict(range=[-0.3, 4.3], tickvals=list(range(5)),
+                                           ticktext=[f"{i} · {LADDER[i][0] if is_en else LADDER[i][1]}" for i in range(5)],
+                                           gridcolor="#f1f5f9"),
+                                xaxis=dict(gridcolor="#f1f5f9"))
+            st.plotly_chart(fig_l, use_container_width=True, theme=None, config={'displayModeBar': False})
+            st.caption("Highest rung among leading labs, from SEC filings known at each date. "
+                       "Company data, not AI-only; v0 thresholds." if is_en
+                       else "Найвища сходинка серед лабораторій-лідерів за звітами SEC, відомими на кожну дату. "
+                            "Дані всієї компанії, не лише ШІ; пороги v0.")
+
     # --- Міст до SAI: люди
     st.markdown("<div style='font-weight:700; font-size:0.9rem; color:#0f172a; margin:6px 0;'>"
                 + ("Bridge to SAI: who is being hired" if is_en else "Міст до SAI: кого наймають") + "</div>",

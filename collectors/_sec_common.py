@@ -33,8 +33,17 @@ METRICS: dict[str, list[str]] = {
             "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"],
     "net_income": ["NetIncomeLoss"],
     "cash": ["CashAndCashEquivalentsAtCarryingValue"],
+    # --- драбина фінансування (metrics/funding_ladder.py) ---
+    "ocf": ["NetCashProvidedByUsedInOperatingActivities"],
+    "debt_issued": ["ProceedsFromIssuanceOfLongTermDebt", "ProceedsFromIssuanceOfDebt",
+                    "ProceedsFromIssuanceOfSeniorLongTermDebt", "ProceedsFromDebtNetOfIssuanceCosts"],
+    "equity_issued": ["ProceedsFromIssuanceOfCommonStock", "ProceedsFromIssuanceInitialPublicOffering",
+                      "ProceedsFromIssuanceOrSaleOfEquity"],
+    "buybacks": ["PaymentsForRepurchaseOfCommonStock"],
+    "receivables": ["AccountsReceivableNetCurrent"],
+    "inventory": ["InventoryNet"],
 }
-INSTANT_METRICS = {"cash"}          # залишок на дату, а не потік за період
+INSTANT_METRICS = {"cash", "receivables", "inventory"}   # залишок на дату, а не потік за період
 SINCE = date.fromisoformat(os.getenv("SEC_BACKFILL_START", "2021-01-01"))
 
 # Щоденний запуск бере лише подання за останні N днів: історія вже в базі,
