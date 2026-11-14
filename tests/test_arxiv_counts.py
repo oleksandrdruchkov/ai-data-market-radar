@@ -96,7 +96,7 @@ def test_query_budget_and_resume(monkeypatch):
 def test_phrase_report_counts_each_phrase():
     rows = ac.phrase_report(date(2026, 10, 1), count=lambda q: 10, out=lambda s: None)
     n_phrases = sum(len(p) for _, _, p in ac.DIRECTIONS.values())
-    assert len(rows) == 1 + len(ac.DIRECTIONS) + n_phrases
+    assert len(rows) == 1 + 2 * len(ac.STEM_CHECKS) + len(ac.DIRECTIONS) + n_phrases
     only = ac.phrase_report(date(2026, 10, 1), count=lambda q: 10, out=lambda s: None, only="robots")
     assert len(only) == 2 + len(ac.DIRECTIONS["robots"][2])
 
@@ -116,7 +116,9 @@ def test_phrase_report_stops_with_partial_result():
 
 def test_no_bare_ambiguous_words():
     for _, _, phrases in ac.DIRECTIONS.values():
-        assert "oversight" not in phrases and "alignment" not in phrases
+        for bad in ("oversight", "alignment", "agentic", "scheming", "interpretability"):
+            assert bad not in phrases
+        assert len({p.lower() for p in phrases}) == len(phrases)
 
 
 def test_changed_phrase_list_recomputes_history():

@@ -55,54 +55,51 @@ TOTAL_ID = "arxiv_papers_total"
 CATEGORIES = ["cs.AI", "cs.LG", "cs.CL", "cs.RO", "cs.MA"]
 
 # id -> (назва UA, назва EN, фрази для пошуку в анотації)
-# Фрази - лише такі, що в категоріях ШІ майже завжди означають саме цей напрям.
-# Багатозначні слова беруться у сполученні: не «oversight», а «scalable oversight».
+# arXiv зводить слова до основи: однина й множина, дефіс і пробіл дають однакові числа,
+# тож у списку лише одна форма. Слова, чия основа збігається з поширеним словом, не беруться:
+# «agentic» шукається як «agent», «scheming» - як «scheme», «interpretability» - як «interpret».
 # Перевірити, скільки статей дає кожна фраза: python -m collectors.arxiv_counts --check
 DIRECTIONS: dict[str, tuple[str, str, list[str]]] = {
     "agents": ("Агенти, що діють самі", "Autonomous agents", [
-        "LLM agent", "LLM agents", "LLM-based agent", "LLM-based agents",
-        "language agent", "language agents", "AI agent", "AI agents",
-        "autonomous agent", "autonomous agents", "agentic",
-        "tool use", "tool-use", "tool calling", "function calling",
-        "computer use", "computer-use agent", "GUI agent", "GUI agents",
-        "web agent", "web agents", "coding agent", "coding agents",
-        "software engineering agent", "agent memory", "long-horizon agent",
-        "multi-agent LLM", "LLM-based multi-agent", "agent swarm",
+        "LLM agent", "LLM-based agent", "language agent", "AI agent", "autonomous agent",
+        "tool use", "tool calling", "function calling",
+        "computer use", "GUI agent", "web agent", "coding agent", "software engineering agent",
+        "agent memory", "long-horizon agent", "multi-agent LLM", "LLM-based multi-agent", "agent swarm",
     ]),
     "ai_science": ("ШІ веде дослідження сам", "AI doing research itself", [
-        "AI scientist", "AI scientists", "AI co-scientist",
+        "AI scientist", "AI co-scientist",
         "automated scientific discovery", "autonomous scientific discovery",
-        "autonomous research", "automated research", "research agent", "research agents",
+        "autonomous research", "automated research", "research agent",
         "automated AI research", "AI research automation", "automating AI research",
         "automated machine learning research", "automated alignment research",
-        "self-improving", "recursive self-improvement", "self-improving agent",
+        "self-improving", "recursive self-improvement",
         "automated hypothesis generation", "LLM-driven discovery",
-        "self-driving laboratory", "self-driving lab", "autonomous laboratory",
+        "self-driving laboratory", "autonomous laboratory",
     ]),
     "robots": ("Роботи і фізичний світ", "Robots and the physical world", [
-        "robot", "robots", "robotic", "robotics", "humanoid",
-        "embodied", "embodied agent", "embodied AI",
-        "vision-language-action", "VLA model", "VLA models",
-        "dexterous manipulation", "robot manipulation", "robotic manipulation",
+        "robot", "robotic", "humanoid", "embodied", "embodied agent", "embodied AI",
+        "vision-language-action", "VLA model", "dexterous manipulation", "robot manipulation",
         "sim-to-real", "robot learning", "legged locomotion",
     ]),
     "reasoning": ("Міркування", "Reasoning", [
         "test-time compute", "test-time scaling", "inference-time compute", "inference-time scaling",
-        "chain of thought", "chain-of-thought", "long chain-of-thought",
-        "reasoning model", "reasoning models", "large reasoning model", "large reasoning models",
+        "chain of thought", "long chain-of-thought", "reasoning model", "large reasoning model",
         "reinforcement learning with verifiable rewards", "verifiable rewards",
         "process reward model", "latent reasoning", "thinking tokens",
     ]),
     "safety": ("Безпека і контроль", "Safety and control", [
         "AI safety", "AI alignment", "value alignment", "alignment of language models",
-        "interpretability", "mechanistic interpretability", "sparse autoencoder", "sparse autoencoders",
-        "red teaming", "red-teaming", "jailbreak", "jailbreaks", "jailbreaking",
+        "mechanistic interpretability", "sparse autoencoder",
+        "red teaming", "jailbreak",
         "scalable oversight", "human oversight", "AI control", "chain-of-thought monitoring",
-        "deceptive alignment", "emergent misalignment", "scheming", "sandbagging",
-        "reward hacking", "evaluation awareness", "dangerous capabilities", "dangerous capability",
+        "deceptive alignment", "emergent misalignment", "in-context scheming", "sandbagging",
+        "reward hacking", "evaluation awareness", "dangerous capabilities",
         "model organisms", "corrigibility",
     ]),
 }
+
+# Контрольні пари для --check: якщо числа в парі майже однакові, arXiv зводить їх до однієї основи.
+STEM_CHECKS = [("agentic", "agent"), ("scheming", "scheme"), ("interpretability", "interpret")]
 
 
 def merge_phrases(base: dict[str, tuple[str, str, list[str]]],
@@ -266,6 +263,13 @@ def phrase_report(month: date, count=None, sleep=time.sleep, only: str | None = 
         total = count(build_query(month, None))
         rows.append(("всього", "", total))
         out(f"Місяць {month:%Y-%m}, усіх статей ШІ: {total}")
+        if not only or only == "stems":
+            for w1, w2 in STEM_CHECKS:
+                n1, n2 = count(build_query(month, [w1])), count(build_query(month, [w2]))
+                rows += [("основа", w1, n1), ("основа", w2, n2)]
+                out(f"основа        {n1:6} | {n2:6}  «{w1}» | «{w2}»")
+            if only == "stems":
+                return rows
         for k, (_, _, phrases) in DIRECTIONS.items():
             if only and k != only:
                 continue
