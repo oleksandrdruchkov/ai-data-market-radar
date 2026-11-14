@@ -46,6 +46,7 @@ def make(rows, answers, today=date(2026, 11, 14)):
     c = ac.ArxivCounts.__new__(ac.ArxivCounts)
     c.db, c.today, c._calls, c.sleep = FakeDb(rows), today, 0, lambda s: None
     c.directions, c.method_version = ac.DIRECTIONS, VER
+    c.log = __import__("logging").getLogger("test")
     c.count = lambda q: answers(q)
     return c
 
@@ -68,11 +69,49 @@ def test_failed_total_blocks_shares():
     assert all(r.error for r in res)                                    # нічого не пишеться
 
 
+def test_failure_mid_backfill_keeps_whole_months_only():
+    calls = {"n": 0}
+
+    def answers(q):
+        calls["n"] += 1
+        if calls["n"] > 8:                                               # 1-й місяць (6 запитів) цілий, 2-й обірвано
+            raise RuntimeError("429")
+        return 100 if "abs:" not in q else 10
+    c = make([], answers)
+    res = {r.metric_id: r for r in c.fetch_series()}
+    assert [d for d, _ in res["arxiv_papers_total"].points] == [date(2023, 1, 1)]
+    assert all(len(r.points) == 1 and not r.error for r in res.values())
+    assert "429" in c.stop_reason
+
+
+def test_query_budget_and_resume(monkeypatch):
+    monkeypatch.setenv("ARXIV_COUNTS_MAX_QUERIES", "13")              # вистачає на 2 місяці по 6 запитів
+    c = make([], lambda q: 50)
+    res = {r.metric_id: r for r in c.fetch_series()}
+    assert len(res["arxiv_papers_total"].points) == 2 and "ліміт" in c.stop_reason
+    resumed = make([{"period_start": "2023-02-01", "method_version": VER}], lambda q: 1)
+    assert resumed.since("arxiv_papers_total", "GLOBAL") == date(2023, 2, 1)
+
+
 def test_phrase_report_counts_each_phrase():
-    asked = []
-    rows = ac.phrase_report(date(2026, 10, 1), count=lambda q: asked.append(q) or 10)
+    rows = ac.phrase_report(date(2026, 10, 1), count=lambda q: 10, out=lambda s: None)
     n_phrases = sum(len(p) for _, _, p in ac.DIRECTIONS.values())
     assert len(rows) == 1 + len(ac.DIRECTIONS) + n_phrases
+    only = ac.phrase_report(date(2026, 10, 1), count=lambda q: 10, out=lambda s: None, only="robots")
+    assert len(only) == 2 + len(ac.DIRECTIONS["robots"][2])
+
+
+def test_phrase_report_stops_with_partial_result():
+    seen = {"n": 0}
+
+    def count(q):
+        seen["n"] += 1
+        if seen["n"] > 3:
+            raise RuntimeError("429")
+        return 10
+    printed = []
+    rows = ac.phrase_report(date(2026, 10, 1), count=count, out=printed.append)
+    assert len(rows) == 3 and printed[-1].startswith("ЗУПИНЕНО")
 
 
 def test_no_bare_ambiguous_words():

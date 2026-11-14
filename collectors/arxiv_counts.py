@@ -20,10 +20,13 @@ collectors/arxiv_counts.py
 перерахунок двох останніх місяців (arXiv дописує статті із запізненням). Поточний місяць
 неповний: is_estimate = true.
 
-arXiv просить не частіше одного запиту на 3 секунди: перший запуск ~ (місяців × 6) × 3 с,
-для 2023-01..2026-11 це близько 15 хвилин.
+arXiv обмежує частоту (429), тому пауза 6 с і не більше ARXIV_COUNTS_MAX_QUERIES запитів
+за запуск (120 = 20 місяців). Місяць пишеться лише цілим (усі статті + усі напрями), а
+наступний запуск продовжує з останнього записаного місяця, тож історія з 2023 року
+збирається за 2-3 щоденні запуски.
 
-Змінні: ARXIV_COUNTS_START="2023-01-01"
+Змінні: ARXIV_COUNTS_START="2023-01-01"   ARXIV_COUNTS_MAX_QUERIES=120
+        PHRASE_CHECK_DIRECTION=agents  (для --check: лише один напрям, щоб не впертися в ліміт)
 Запуск: python -m collectors.arxiv_counts
 Перевірка фраз (лише друк, без запису): python -m collectors.arxiv_counts --check
 """
@@ -43,8 +46,9 @@ from collectors._metric_series import MetricSeriesCollector, SeriesResult
 API_URL = "https://export.arxiv.org/api/query"
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
 OPENSEARCH = "{http://a9.com/-/spec/opensearch/1.1/}totalResults"
-PAUSE_SECONDS = 3.0
-RETRY_PAUSES = (10, 30, 60)      # arXiv часто віддає 500/503 під навантаженням - чекаємо довше
+PAUSE_SECONDS = 6.0             # arXiv просить >= 3 с; на 3 с після ~80 запитів відповідав 429
+RETRY_PAUSES = (60, 180, 300)   # 429/5xx: arXiv відпускає обмеження лише через кілька хвилин
+MAX_QUERIES = 120               # запитів за один запуск; решта історії - наступного дня
 METHOD_VERSION = "v1"
 TOTAL_ID = "arxiv_papers_total"
 
@@ -185,7 +189,7 @@ class ArxivCounts(MetricSeriesCollector):
 
     def since(self, metric_id: str, region: str) -> date:
         """Перший запуск або змінений список фраз - уся історія з ARXIV_COUNTS_START;
-        інакше - два останні місяці."""
+        інакше - два останні місяці або місяць, на якому перервався минулий збір."""
         rows = self.db.select("fct_metric_values", "period_start,method_version",
                               eq={"metric_id": metric_id, "region": region},
                               order="period_start", desc=True, limit=1)
@@ -194,7 +198,8 @@ class ArxivCounts(MetricSeriesCollector):
         y, m = self.today.year, self.today.month - 1
         if m == 0:
             y, m = y - 1, 12
-        return date(y, m, 1)
+        last_saved = date.fromisoformat(str(rows[0]["period_start"])[:10])
+        return min(last_saved, date(y, m, 1))       # збір історії перервався - продовжити звідти
 
     def count(self, query: str) -> int:
         if self._calls:
@@ -209,54 +214,67 @@ class ArxivCounts(MetricSeriesCollector):
         start = min(self.since(TOTAL_ID, "GLOBAL"),
                     *(self.since(share_id(k), "GLOBAL") for k in self.directions))
         months = months_between(start, self.today)
+        budget = int(os.getenv("ARXIV_COUNTS_MAX_QUERIES", str(MAX_QUERIES)))
+        per_month = 1 + len(self.directions)
 
         total = SeriesResult(metric_id=TOTAL_ID, region="GLOBAL")
         shares = {k: SeriesResult(metric_id=share_id(k), region="GLOBAL") for k in self.directions}
+        self.stop_reason = None
+        used = 0
 
+        # Місяць записується лише цілим: усі статті + усі напрями. Збій або вичерпаний
+        # ліміт запитів - зупинка; зібрані місяці пишуться, решту дозбирає наступний запуск.
         for m in months:
+            if used + per_month > budget:
+                self.stop_reason = f"ліміт {budget} запитів за запуск; продовження з {m:%Y-%m} наступного разу"
+                break
             _, last = month_bounds(m)
             partial = last >= self.today
+            used += per_month
             try:
                 n_all = self.count(build_query(m, None))
+                if n_all == 0:
+                    raise ValueError("arXiv повернув 0 статей - підозріло")
+                ns = {k: self.count(build_query(m, ph)) for k, (_, _, ph) in self.directions.items()}
             except Exception as e:
-                total.error = f"{m:%Y-%m}: {type(e).__name__}: {e}"
-                break                                   # без знаменника частки не рахуються
-            if n_all == 0:
-                total.error = f"{m:%Y-%m}: arXiv повернув 0 статей - підозріло, зупинка"
+                self.stop_reason = f"{m:%Y-%m}: {type(e).__name__}: {e}"
                 break
             total.points.append((m, float(n_all)))
             total.extra[m] = {"period_end": last.isoformat(), "is_estimate": partial}
-            for k, (_, _, phrases) in self.directions.items():
-                s = shares[k]
-                if s.error:
-                    continue
-                try:
-                    n = self.count(build_query(m, phrases))
-                except Exception as e:
-                    s.error = f"{m:%Y-%m}: {type(e).__name__}: {e}"
-                    continue
-                s.points.append((m, round(100.0 * n / n_all, 3)))
-                s.extra[m] = {"period_end": last.isoformat(), "is_estimate": partial,
-                              "numerator": float(n), "denominator": float(n_all)}
+            for k, n in ns.items():
+                shares[k].points.append((m, round(100.0 * n / n_all, 3)))
+                shares[k].extra[m] = {"period_end": last.isoformat(), "is_estimate": partial,
+                                      "numerator": float(n), "denominator": float(n_all)}
 
-        # Ряд з помилкою не пишеться зовсім (правило каркаса), тож частково зібрані
-        # місяці не змішуються з дірками. Без знаменника не пишуться й частки.
-        if total.error:
-            for s in shares.values():
-                s.error = s.error or f"немає знаменника: {total.error}"
+        if self.stop_reason:
+            self.log.warning(f"Зупинка: {self.stop_reason}")
+            if not total.points:                        # не зібрано жодного місяця - це помилка запуску
+                for r in (total, *shares.values()):
+                    r.error = self.stop_reason
         return [total, *shares.values()]
 
 
-def phrase_report(month: date, count=None, sleep=time.sleep) -> list[tuple[str, str, int]]:
-    """Скільки статей місяця дає кожна фраза окремо - щоб знайти зашумлені фрази."""
+def phrase_report(month: date, count=None, sleep=time.sleep, only: str | None = None,
+                  out=print) -> list[tuple[str, str, int]]:
+    """Скільки статей місяця дає кожна фраза окремо - щоб знайти зашумлені фрази.
+    Друкує рядок одразу після кожного запиту; при збої arXiv зупиняється з частковим результатом."""
     c = ArxivCounts.__new__(ArxivCounts)
     c.sleep, c._calls = sleep, 0
     count = count or c.count
-    rows = [("всього", "", count(build_query(month, None)))]
-    for k, (_, _, phrases) in DIRECTIONS.items():
-        rows.append((k, "УСІ ФРАЗИ", count(build_query(month, phrases))))
-        for p in phrases:
-            rows.append((k, p, count(build_query(month, [p]))))
+    rows: list[tuple[str, str, int]] = []
+    try:
+        total = count(build_query(month, None))
+        rows.append(("всього", "", total))
+        out(f"Місяць {month:%Y-%m}, усіх статей ШІ: {total}")
+        for k, (_, _, phrases) in DIRECTIONS.items():
+            if only and k != only:
+                continue
+            for label, ph in [("УСІ ФРАЗИ", phrases), *((p, [p]) for p in phrases)]:
+                n = count(build_query(month, ph))
+                rows.append((k, label, n))
+                out(f"{k:12} {n:6} {100 * n / total:6.2f} %  {label}")
+    except Exception as e:
+        out(f"ЗУПИНЕНО після {len(rows)} рядків: {type(e).__name__}: {str(e)[:200]}")
     return rows
 
 
@@ -294,10 +312,6 @@ if __name__ == "__main__":
     elif "--check" in sys.argv:
         t = date.today()
         prev = date(t.year - (t.month == 1), 12 if t.month == 1 else t.month - 1, 1)
-        rows = phrase_report(prev)
-        total = rows[0][2]
-        print(f"Місяць {prev:%Y-%m}, усіх статей ШІ: {total}")
-        for k, p, n in rows[1:]:
-            print(f"{k:12} {n:6} {100 * n / total:6.2f} %  {p}")
+        phrase_report(prev, only=os.getenv("PHRASE_CHECK_DIRECTION") or None)
     else:
         ArxivCounts().run()
