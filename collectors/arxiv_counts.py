@@ -21,7 +21,7 @@ collectors/arxiv_counts.py
 неповний: is_estimate = true.
 
 arXiv обмежує частоту (429), тому пауза 6 с і не більше ARXIV_COUNTS_MAX_QUERIES запитів
-за запуск (120 = 20 місяців). Місяць пишеться лише цілим (усі статті + усі напрями), а
+за запуск (120 = 17 місяців по 7 запитів). Місяць пишеться лише цілим (усі статті + усі напрями), а
 наступний запуск продовжує з останнього записаного місяця, тож історія з 2023 року
 збирається за 2-3 щоденні запуски.
 
@@ -66,15 +66,19 @@ DIRECTIONS: dict[str, tuple[str, str, list[str]]] = {
         "computer use", "GUI agent", "web agent", "coding agent", "software engineering agent",
         "agent memory", "long-horizon agent", "multi-agent LLM", "LLM-based multi-agent", "agent swarm",
     ]),
-    "ai_science": ("ШІ веде дослідження сам", "AI doing research itself", [
+    "ai_science": ("ШІ веде наукові дослідження", "AI doing scientific research", [
         "AI scientist", "AI co-scientist",
         "automated scientific discovery", "autonomous scientific discovery",
         "autonomous research", "automated research", "research agent",
         "automated AI research", "AI research automation",
         "automated machine learning research", "automated alignment research",
-        "self-improving", "recursive self-improvement",
         "automated hypothesis generation", "LLM-driven discovery",
         "self-driving laboratory", "autonomous laboratory",
+    ]),
+    # Окремо від ai_science: «self-improving» через основу ловить і «self-improvement» -
+    # будь-які методи, де модель покращує власні відповіді чи навчання.
+    "self_improvement": ("ШІ вдосконалює себе", "AI improving itself", [
+        "self-improving", "recursive self-improvement", "self-evolving", "self-modifying",
     ]),
     "robots": ("Роботи і фізичний світ", "Robots and the physical world", [
         "robot", "humanoid", "embodied", "embodied agent", "embodied AI",

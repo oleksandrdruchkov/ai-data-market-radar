@@ -74,7 +74,7 @@ def test_failure_mid_backfill_keeps_whole_months_only():
 
     def answers(q):
         calls["n"] += 1
-        if calls["n"] > 8:                                               # 1-й місяць (6 запитів) цілий, 2-й обірвано
+        if calls["n"] > len(ac.DIRECTIONS) + 3:                          # 1-й місяць цілий, 2-й обірвано
             raise RuntimeError("429")
         return 100 if "abs:" not in q else 10
     c = make([], answers)
@@ -85,7 +85,8 @@ def test_failure_mid_backfill_keeps_whole_months_only():
 
 
 def test_query_budget_and_resume(monkeypatch):
-    monkeypatch.setenv("ARXIV_COUNTS_MAX_QUERIES", "13")              # вистачає на 2 місяці по 6 запитів
+    per_month = 1 + len(ac.DIRECTIONS)
+    monkeypatch.setenv("ARXIV_COUNTS_MAX_QUERIES", str(2 * per_month + 1))   # вистачає рівно на 2 місяці
     c = make([], lambda q: 50)
     res = {r.metric_id: r for r in c.fetch_series()}
     assert len(res["arxiv_papers_total"].points) == 2 and "ліміт" in c.stop_reason
