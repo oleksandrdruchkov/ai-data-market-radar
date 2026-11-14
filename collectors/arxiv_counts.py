@@ -9,8 +9,12 @@ collectors/arxiv_counts.py
                          numerator = статей напряму, denominator = усіх статей
 
 Напрями (DIRECTIONS) - пошук за фразами в назві та анотації. Одна стаття може потрапити в кілька
-напрямів, тож частки не складаються в 100 %. Змінили запит напряму -> підніміть METHOD_VERSION,
-бо ряд змінює зміст.
+напрямів, тож частки не складаються в 100 %.
+
+До фраз з коду додаються фрази, які людина схвалила на сторінці перевірки
+(ops_phrase_candidates, status = 'added'; кандидатів готує metrics/arxiv_phrase_candidates.py).
+Версія методу = METHOD_VERSION + відбиток повного списку фраз. Список змінився -> версія
+змінилась -> збирач перераховує всю історію новим списком, щоб ряд не мав «шва».
 
 Перший запуск - уся історія з ARXIV_COUNTS_START (за замовчуванням 2023-01), далі -
 перерахунок двох останніх місяців (arXiv дописує статті із запізненням). Поточний місяць
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import os
 import time
+import hashlib
 import calendar
 import xml.etree.ElementTree as ET
 from datetime import date
@@ -95,6 +100,27 @@ DIRECTIONS: dict[str, tuple[str, str, list[str]]] = {
 }
 
 
+def merge_phrases(base: dict[str, tuple[str, str, list[str]]],
+                  extra: list[dict]) -> dict[str, tuple[str, str, list[str]]]:
+    """Фрази з коду + схвалені людиною (рядки ops_phrase_candidates: phrase, direction).
+    Дублікати (без різниці регістру) і невідомі напрями відкидаються."""
+    out = {k: (ua, en, list(ph)) for k, (ua, en, ph) in base.items()}
+    for r in extra:
+        k, phrase = r.get("direction"), (r.get("phrase") or "").strip()
+        if k not in out or not phrase:
+            continue
+        if phrase.lower() not in {p.lower() for p in out[k][2]}:
+            out[k][2].append(phrase)
+    return out
+
+
+def fingerprint(directions: dict[str, tuple[str, str, list[str]]]) -> str:
+    """Короткий відбиток списку фраз: інший список - інший відбиток."""
+    flat = "|".join(f"{k}:" + ",".join(sorted(p.lower() for p in ph))
+                    for k, (_, _, ph) in sorted(directions.items()))
+    return hashlib.sha1(flat.encode("utf-8")).hexdigest()[:8]
+
+
 def share_id(direction: str) -> str:
     return f"arxiv_share_{direction}"
 
@@ -146,12 +172,23 @@ class ArxivCounts(MetricSeriesCollector):
         self.sleep = sleep
         self.today = today or date.today()
         self._calls = 0
+        self.directions = merge_phrases(DIRECTIONS, self.approved_phrases())
+        self.method_version = f"{METHOD_VERSION}-{fingerprint(self.directions)}"
+
+    def approved_phrases(self) -> list[dict]:
+        try:
+            return self.db.select("ops_phrase_candidates", "phrase,direction", eq={"status": "added"})
+        except Exception as e:                      # таблиці ще немає - працюємо зі списком з коду
+            self.log.warning(f"ops_phrase_candidates недоступна: {e}")
+            return []
 
     def since(self, metric_id: str, region: str) -> date:
-        """Перший запуск - з ARXIV_COUNTS_START; далі - два останні місяці."""
-        rows = self.db.select("fct_metric_values", "period_start",
-                              eq={"metric_id": metric_id, "region": region}, limit=1)
-        if not rows:
+        """Перший запуск або змінений список фраз - уся історія з ARXIV_COUNTS_START;
+        інакше - два останні місяці."""
+        rows = self.db.select("fct_metric_values", "period_start,method_version",
+                              eq={"metric_id": metric_id, "region": region},
+                              order="period_start", desc=True, limit=1)
+        if not rows or rows[0].get("method_version") != self.method_version:
             return date.fromisoformat(os.getenv("ARXIV_COUNTS_START", "2023-01-01")).replace(day=1)
         y, m = self.today.year, self.today.month - 1
         if m == 0:
@@ -168,11 +205,11 @@ class ArxivCounts(MetricSeriesCollector):
 
     def fetch_series(self) -> list[SeriesResult]:
         start = min(self.since(TOTAL_ID, "GLOBAL"),
-                    *(self.since(share_id(k), "GLOBAL") for k in DIRECTIONS))
+                    *(self.since(share_id(k), "GLOBAL") for k in self.directions))
         months = months_between(start, self.today)
 
         total = SeriesResult(metric_id=TOTAL_ID, region="GLOBAL")
-        shares = {k: SeriesResult(metric_id=share_id(k), region="GLOBAL") for k in DIRECTIONS}
+        shares = {k: SeriesResult(metric_id=share_id(k), region="GLOBAL") for k in self.directions}
 
         for m in months:
             _, last = month_bounds(m)
@@ -187,7 +224,7 @@ class ArxivCounts(MetricSeriesCollector):
                 break
             total.points.append((m, float(n_all)))
             total.extra[m] = {"period_end": last.isoformat(), "is_estimate": partial}
-            for k, (_, _, phrases) in DIRECTIONS.items():
+            for k, (_, _, phrases) in self.directions.items():
                 s = shares[k]
                 if s.error:
                     continue
