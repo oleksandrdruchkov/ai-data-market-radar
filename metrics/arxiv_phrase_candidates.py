@@ -52,15 +52,15 @@ def guess_direction(texts: list[str], directions: dict) -> str | None:
     hits: Counter = Counter()
     for t in texts:
         nt = norm(t)
-        for k, (_, _, phrases) in directions.items():
-            if any(norm(p) in nt for p in phrases):
+        for k, (_, _, phrases, _) in directions.items():
+            if any(norm(p) in nt for p in ac.plain_terms(phrases)):
                 hits[k] += 1
     return hits.most_common(1)[0][0] if hits else None
 
 
 def find_candidates(signals: list[dict], directions: dict) -> list[dict]:
     """Чиста функція: сигнали місяця -> кандидати, найчастіші першими."""
-    all_phrases = [p for _, _, ph in directions.values() for p in ph]
+    all_phrases = [p for _, _, ph, _ in directions.values() for p in ac.plain_terms(ph)]
     groups: dict[str, list[dict]] = defaultdict(list)
     names: dict[str, Counter] = defaultdict(Counter)
     for s in signals:
