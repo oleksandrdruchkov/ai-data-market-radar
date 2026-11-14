@@ -73,6 +73,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m collectors.fred_series
 
+      - name: People - Indeed AI Tracker (частка вакансій з ШІ)
+        if: ${{ !cancelled() }}
+        run: python -m collectors.indeed_ai_tracker
+
       - name: Bubble - Adzuna counts (ML vs розробники)
         if: ${{ !cancelled() }}
         env:
