@@ -90,7 +90,8 @@ def undo(db: Db, rec_id: int) -> dict:
 PHRASE_TABLE = "ops_phrase_candidates"
 DIRECTION_NAMES = {
     "agents": "Агенти, що діють самі",
-    "ai_science": "ШІ веде дослідження сам",
+    "ai_science": "ШІ веде наукові дослідження",
+    "self_improvement": "ШІ вдосконалює себе",
     "robots": "Роботи і фізичний світ",
     "reasoning": "Міркування",
     "safety": "Безпека і контроль",
