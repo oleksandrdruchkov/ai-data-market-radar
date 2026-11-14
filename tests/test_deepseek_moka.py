@@ -38,3 +38,76 @@ def test_parse_page_open_jobs_and_total():
 def test_changed_format_is_an_error():
     with pytest.raises(ValueError):
         ds.embedded_state("<html>no state</html>")
+
+
+# ---------------- зашифрований список через API ----------------
+
+import base64
+
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+KEY, IV = "cfe18ac03acf564f", "de7c21ed8d6f50fe"
+
+
+def encrypt(obj) -> dict:
+    p = padding.PKCS7(128).padder()
+    raw = p.update(json.dumps(obj, ensure_ascii=False).encode()) + p.finalize()
+    e = Cipher(algorithms.AES(KEY.encode()), modes.CBC(IV.encode())).encryptor()
+    return {"data": base64.b64encode(e.update(raw) + e.finalize()).decode(), "necromancer": KEY}
+
+
+def test_decrypt_roundtrip_and_errors():
+    body = encrypt({"code": 0, "data": {"jobs": [{"id": "x"}]}})
+    assert ds.open_response(body, IV) == {"jobs": [{"id": "x"}]}
+    with pytest.raises(ValueError):
+        ds.open_response({"code": 102, "msg": "参数错误", "success": False}, IV)
+
+
+API_JOBS = [{"id": f"j{i}", "title": f"岗位{i}", "status": "open", "openedAt": "2026-06-24T00:00",
+             "jobDescription": "<p>负责 Agent 训练</p>", "zhineng": {"id": 1, "name": "深度学习"},
+             "locations": [{"provinceName": "北京市", "cityName": "海淀区", "address": "融科资讯中心"}]}
+            for i in range(20)]
+
+
+class FakeResp:
+    def __init__(self, body):
+        self.body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.body
+
+
+class FakeSession:
+    def __init__(self, fail=False):
+        self.headers, self.calls, self.fail = {}, [], fail
+
+    def post(self, url, json=None, timeout=None):
+        self.calls.append(json)
+        if self.fail:
+            return FakeResp({"code": 500, "success": False})
+        chunk = API_JOBS[json["offset"]: json["offset"] + json["limit"]]
+        return FakeResp(encrypt({"code": 0, "data": {"jobStats": {"total": 0}, "jobs": chunk}}))
+
+
+def embedded_page(total=20):
+    state = {"jobs": JOBS[:1], "jobStats": {"total": total}, "aesIv": IV}
+    return f'<div data-x="{html.escape(json.dumps(state, ensure_ascii=False))}"></div>'
+
+
+def test_fetch_all_pages_with_descriptions(monkeypatch):
+    monkeypatch.setattr(ds, "get_with_retry", lambda *a, **k: type("R", (), {"text": embedded_page()})())
+    s = FakeSession()
+    jobs, total, mode = ds.fetch_all(session=s, sleep=lambda x: None)
+    assert mode == "api" and total == 20 and len(jobs) == 20 and len(s.calls) == 2
+    j = jobs[0]
+    assert j["description"] == "负责 Agent 训练" and j["location"] == "北京市海淀区" and j["category"] == "深度学习"
+
+
+def test_fetch_all_falls_back_to_embedded(monkeypatch):
+    monkeypatch.setattr(ds, "get_with_retry", lambda *a, **k: type("R", (), {"text": embedded_page()})())
+    jobs, total, mode = ds.fetch_all(session=FakeSession(fail=True), sleep=lambda x: None)
+    assert mode == "embedded" and len(jobs) == 1

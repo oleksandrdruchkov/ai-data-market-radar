@@ -9,3 +9,4 @@ python-dotenv
 numpy
 scipy
 pypdf
+cryptography
