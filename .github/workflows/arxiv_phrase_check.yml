@@ -5,6 +5,12 @@ name: ArXiv phrases - check
 # Запуск: Actions -> «ArXiv phrases - check» -> Run workflow; результат - у журналі кроку.
 on:
   workflow_dispatch:
+    inputs:
+      direction:
+        description: 'Напрям (усі разом - ~115 запитів, arXiv може обмежити)'
+        type: choice
+        default: agents
+        options: [agents, ai_science, robots, reasoning, safety, all]
 
 jobs:
   check:
@@ -21,7 +27,7 @@ jobs:
       - run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Probe - які запити приймає arXiv
-        run: python -m collectors.arxiv_counts --probe
       - name: Phrase counts
+        env:
+          PHRASE_CHECK_DIRECTION: ${{ inputs.direction != 'all' && inputs.direction || '' }}
         run: python -m collectors.arxiv_counts --check
