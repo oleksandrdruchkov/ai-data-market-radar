@@ -39,13 +39,9 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
 JOB_ENDPOINTS = [
     "/api/outer/ats-apply/website/jobs/v2",
     "/api/outer/ats-apply/website/jobs",
-    "/api/outer/ats-apply/website/jobs/list",
 ]
 PAYLOADS = [
-    {"orgId": ORG, "siteId": SITE, "limit": 10, "offset": 0},
-    {"orgId": ORG, "siteId": SITE, "limit": 10, "offset": 0, "site": "social"},
-    {"orgId": ORG, "siteId": SITE, "limit": 10, "offset": 0, "needStat": True},
-    {"orgId": ORG, "siteId": str(SITE), "pageSize": 10, "page": 1},
+    {"orgId": ORG, "siteId": SITE, "limit": 15, "offset": 15},     # друга сторінка: вакансії 16-30
 ]
 
 
@@ -53,7 +49,7 @@ def cut(text: str, n: int = 300) -> str:
     return text[:n].replace("\n", " ")
 
 
-def try_decrypt(data_b64: str, key: str) -> str | None:
+def try_decrypt(data_b64: str, key: str, iv: str | None = None) -> str | None:
     try:
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     except ImportError:
@@ -61,6 +57,8 @@ def try_decrypt(data_b64: str, key: str) -> str | None:
     raw = base64.b64decode(data_b64)
     k = key.encode()
     variants = [("ECB", modes.ECB()), ("CBC iv=key", modes.CBC(k[:16])), ("CBC iv=0", modes.CBC(b"\0" * 16))]
+    if iv:
+        variants.insert(0, ("CBC iv=aesIv", modes.CBC(iv.encode()[:16])))
     for name, mode in variants:
         try:
             d = Cipher(algorithms.AES(k), mode).decryptor()
@@ -81,11 +79,14 @@ def main() -> None:
     print(f"== 1. Сторінка {PAGE}")
     r = s.get(PAGE, timeout=30)
     page = r.text
+    aes_iv = None
     print(f"    HTTP {r.status_code}, {len(page)} символів")
     for blob in re.findall(r"""=\s*["']({&quot;.*?})["']""", page, re.S)[:3]:
         try:
             data = json.loads(htmllib.unescape(blob))
             print(f"    вбудований JSON: ключі {list(data)[:30]}")
+            aes_iv = data.get("aesIv") or aes_iv
+            print(f"    aesIv: {aes_iv!r}; вбудовано вакансій: {len(data.get('jobs') or [])}")
             for k, v in data.items():
                 if re.search(r"job|position", k, re.I):
                     print(f"      {k}: {cut(json.dumps(v, ensure_ascii=False), 400)}")
@@ -98,7 +99,15 @@ def main() -> None:
     for src in app_js[:1]:
         js = s.get(src, timeout=60).text
         print(f"    {src.rsplit('/', 1)[-1]}: {len(js)} символів")
-        for word in ("website/jobs", "ats-apply/website", "necromancer", "AES", "decrypt"):
+        m = re.search(r"necromancer\?\(0,[\w$]+\.parseJson\)\(([\w$]+)\(e\.data,e\.necromancer\)", js)
+        if m:
+            fn = re.escape(m.group(1))
+            print(f"    функція розшифрування: {m.group(1)}")
+            for d in list(re.finditer(rf"function {fn}\(|[,;\s]{fn}=function\(", js))[:3]:
+                print(f"      ...{cut(js[d.start(): d.start() + 900], 900)}...")
+        paths = sorted(set(re.findall(r'"(/api/outer/ats-apply/[A-Za-z0-9_/\-]*job[A-Za-z0-9_/\-]*)"', js, re.I)))
+        print(f"    адреси з job (лише друк): {paths}")
+        for word in ("necromancer", "aesIv"):
             hits = [m.start() for m in re.finditer(re.escape(word), js)][:4]
             print(f"    «{word}»: {len(re.findall(re.escape(word), js))} згадок")
             for h in hits:
@@ -119,7 +128,7 @@ def main() -> None:
             except ValueError:
                 continue
             if isinstance(data, dict) and "necromancer" in data and isinstance(data.get("data"), str):
-                print(f"    зашифровано; розшифровка: {try_decrypt(data['data'], data['necromancer'])}")
+                print(f"    зашифровано; розшифровка: {try_decrypt(data['data'], data['necromancer'], aes_iv)}")
                 break                       # для цієї адреси досить
 
 

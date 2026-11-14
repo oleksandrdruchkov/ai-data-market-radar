@@ -79,7 +79,7 @@ def job_location(job: dict) -> str | None:
             if isinstance(it, str) and it.strip():
                 names.append(it.strip())
             elif isinstance(it, dict):
-                for kk in ("address", "cityName", "city", "name"):
+                for kk in ("cityName", "city", "name", "address"):     # місто, а не повна адреса офісу
                     if isinstance(it.get(kk), str) and it[kk].strip():
                         names.append(it[kk].strip())
                         break
@@ -87,12 +87,30 @@ def job_location(job: dict) -> str | None:
     return " / ".join(out) or None
 
 
+def job_category(job: dict) -> str | None:
+    """Категорія вакансії на сторінці (zhineng): «深度学习», «AI核心系统研发» тощо."""
+    z = job.get("zhineng")
+    if isinstance(z, dict):
+        return z.get("label") or z.get("name")
+    if isinstance(z, list):
+        names = [x.get("label") or x.get("name") for x in z if isinstance(x, dict)]
+        return " / ".join(n for n in names if n) or None
+    return z if isinstance(z, str) else None
+
+
 def to_payload(job: dict) -> dict:
     date = (job.get("openedAt") or job.get("createdAt") or "")[:10] or None
+    desc = job_description(job)
+    if not desc:
+        # Список не містить опису (він приходить окремим зашифрованим запитом) - Gemini
+        # отримує хоча б категорію і тип зайнятості.
+        desc = "；".join(x for x in (f"职能：{job_category(job)}" if job_category(job) else "",
+                                      f"类型：{job.get('commitment')}" if job.get("commitment") else "") if x)
     return {
         "id": job["id"],
         "title": job.get("title") or "",
-        "description": job_description(job),
+        "description": desc,
+        "category": job_category(job),
         "location": job_location(job),
         "company": "DeepSeek",
         "url": f"{PAGE}#/job/{job['id']}",
@@ -172,6 +190,8 @@ def dry_run() -> None:
     print(f"Вбудовано вакансій: {len(raw_jobs)}, jobStats.total: {(state.get('jobStats') or {}).get('total')}")
     if raw_jobs:
         print(f"Ключі першої вакансії: {sorted(raw_jobs[0])}")
+        for k in ("location", "locations", "zhineng"):
+            print(f"  {k}: {json.dumps(raw_jobs[0].get(k), ensure_ascii=False)[:300]}")
     jobs, _ = parse_page(page)
     with_desc = sum(1 for j in jobs if j["description"])
     print(f"Відкритих: {len(jobs)}, з описом: {with_desc}, з місцем: {sum(1 for j in jobs if j['location'])}")
