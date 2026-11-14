@@ -44,6 +44,7 @@ API_URL = "https://export.arxiv.org/api/query"
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
 OPENSEARCH = "{http://a9.com/-/spec/opensearch/1.1/}totalResults"
 PAUSE_SECONDS = 3.0
+RETRY_PAUSES = (10, 30, 60)      # arXiv часто віддає 500/503 під навантаженням - чекаємо довше
 METHOD_VERSION = "v1"
 TOTAL_ID = "arxiv_papers_total"
 
@@ -199,8 +200,9 @@ class ArxivCounts(MetricSeriesCollector):
         if self._calls:
             self.sleep(PAUSE_SECONDS)
         self._calls += 1
-        resp = get_with_retry(API_URL, params={"search_query": query, "start": 0, "max_results": 0},
-                              headers=HEADERS, timeout=60)
+        # max_results=1, а не 0: деякі сервери arXiv на 0 відповідають помилкою
+        resp = get_with_retry(API_URL, params={"search_query": query, "start": 0, "max_results": 1},
+                              headers=HEADERS, timeout=60, pauses=RETRY_PAUSES, sleep=self.sleep)
         return parse_total(resp.text)
 
     def fetch_series(self) -> list[SeriesResult]:
@@ -258,9 +260,38 @@ def phrase_report(month: date, count=None, sleep=time.sleep) -> list[tuple[str, 
     return rows
 
 
+def probe(sleep=time.sleep) -> None:
+    """Діагностика: які частини запиту arXiv приймає. Друкує статус кожного варіанта."""
+    import requests
+    m = date.today().replace(day=1)
+    first, last = month_bounds(date(m.year - (m.month == 1), 12 if m.month == 1 else m.month - 1, 1))
+    when = f"submittedDate:[{first:%Y%m%d}0000 TO {last:%Y%m%d}2359]"
+    variants = [
+        ("як у збирачі сигналів", "cat:cs.AI OR cat:cs.CL OR cat:cs.LG", 5),
+        ("max_results=0", "cat:cs.AI", 0),
+        ("max_results=1", "cat:cs.AI", 1),
+        ("дужки", "(cat:cs.AI OR cat:cs.LG)", 1),
+        ("дата", f"cat:cs.AI AND {when}", 1),
+        ("дужки + дата", f"(cat:cs.AI OR cat:cs.LG) AND {when}", 1),
+        ("фраза в анотації", 'cat:cs.AI AND abs:"AI agent"', 1),
+        ("повний запит", build_query(first, None), 1),
+    ]
+    for name, q, mx in variants:
+        try:
+            r = requests.get(API_URL, params={"search_query": q, "start": 0, "max_results": mx},
+                             headers=HEADERS, timeout=60)
+            extra = parse_total(r.text) if r.ok else r.text[:150].replace("\n", " ")
+            print(f"{r.status_code}  {name:24} {extra}")
+        except Exception as e:
+            print(f"ERR  {name:24} {type(e).__name__}: {e}")
+        sleep(PAUSE_SECONDS)
+
+
 if __name__ == "__main__":
     import sys
-    if "--check" in sys.argv:
+    if "--probe" in sys.argv:
+        probe()
+    elif "--check" in sys.argv:
         t = date.today()
         prev = date(t.year - (t.month == 1), 12 if t.month == 1 else t.month - 1, 1)
         rows = phrase_report(prev)
