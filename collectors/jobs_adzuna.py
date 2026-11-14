@@ -1,6 +1,7 @@
 """
 collectors/jobs_adzuna.py
-Вакансії з Adzuna API (США, Велика Британія; ринки та запити налаштовуються).
+Вакансії з Adzuna API (США, Велика Британія, Сінгапур, Індія; ринки та запити налаштовуються).
+APAC представлений Сінгапуром та Індією: Китаю, Японії й Кореї в Adzuna немає.
 Замінює main_pipeline.py.
 
 Важливо: Adzuna повертає лише першу сторінку пошуку, а не повний список ринку,
@@ -8,7 +9,7 @@ collectors/jobs_adzuna.py
 вважати закритою.
 
 Змінні: ADZUNA_APP_ID, ADZUNA_APP_KEY (обов'язкові)
-        ADZUNA_MARKETS="us:US:USD,gb:Europe:GBP"   ADZUNA_QUERY="data engineer python"
+        ADZUNA_MARKETS="us:US:USD,gb:Europe:GBP,sg:APAC:SGD,in:APAC:INR"   ADZUNA_QUERY="data engineer python"
         ADZUNA_PER_PAGE=20
 Запуск: python -m collectors.jobs_adzuna
 """
@@ -22,7 +23,7 @@ from core.http import get_with_retry
 from collectors._jobs_common import JobsCollector
 
 PROMPT_VERSION = "vacancy_v2"
-DEFAULT_MARKETS = "us:US:USD,gb:Europe:GBP"
+DEFAULT_MARKETS = "us:US:USD,gb:Europe:GBP,sg:APAC:SGD,in:APAC:INR"
 
 
 def _markets() -> list[dict]:
