@@ -9,8 +9,8 @@ on:
       direction:
         description: 'Напрям (усі разом - ~115 запитів, arXiv може обмежити)'
         type: choice
-        default: agents
-        options: [agents, ai_science, robots, reasoning, safety, all]
+        default: stems
+        options: [stems, agents, ai_science, robots, reasoning, safety, all]
 
 jobs:
   check:
