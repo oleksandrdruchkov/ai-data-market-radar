@@ -13,7 +13,7 @@ collectors/adzuna_counts.py
 Зміна запитів змінює зміст ряду: тоді підніміть method_version (ADZUNA_COUNT_METHOD).
 
 Змінні: ADZUNA_APP_ID, ADZUNA_APP_KEY (ті самі, що для jobs_adzuna)
-        ADZUNA_COUNT_MARKETS="us,gb,de"
+        ADZUNA_COUNT_MARKETS="us,gb,de,sg,in"
         ADZUNA_COUNT_QUERY_ML="machine learning engineer"
         ADZUNA_COUNT_QUERY_SWE="software developer"
         ADZUNA_COUNT_METHOD="v1"
@@ -84,7 +84,7 @@ class AdzunaCounts(MetricSeriesCollector):
             "adzuna_swe_count": os.getenv("ADZUNA_COUNT_QUERY_SWE", "software developer"),
         }
         out = []
-        for cc in [c.strip().lower() for c in os.getenv("ADZUNA_COUNT_MARKETS", "us,gb,de").split(",") if c.strip()]:
+        for cc in [c.strip().lower() for c in os.getenv("ADZUNA_COUNT_MARKETS", "us,gb,de,sg,in").split(",") if c.strip()]:
             per = {}
             for metric_id, q in queries.items():
                 res = SeriesResult(metric_id=metric_id, region=cc.upper())
