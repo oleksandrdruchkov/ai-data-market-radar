@@ -74,7 +74,7 @@ def test_failure_mid_backfill_keeps_whole_months_only():
 
     def answers(q):
         calls["n"] += 1
-        if calls["n"] > len(ac.DIRECTIONS) + 3:                          # 1-й місяць цілий, 2-й обірвано
+        if calls["n"] > 1 + len(ac.DIRECTIONS) + len(ac.GROUPS) + 2:     # 1-й місяць цілий, 2-й обірвано
             raise RuntimeError("429")
         return 100 if "abs:" not in q else 10
     c = make([], answers)
@@ -85,7 +85,7 @@ def test_failure_mid_backfill_keeps_whole_months_only():
 
 
 def test_query_budget_and_resume(monkeypatch):
-    per_month = 1 + len(ac.DIRECTIONS)
+    per_month = 1 + len(ac.DIRECTIONS) + len(ac.GROUPS)
     monkeypatch.setenv("ARXIV_COUNTS_MAX_QUERIES", str(2 * per_month + 1))   # вистачає рівно на 2 місяці
     c = make([], lambda q: 50)
     res = {r.metric_id: r for r in c.fetch_series()}
@@ -96,8 +96,8 @@ def test_query_budget_and_resume(monkeypatch):
 
 def test_phrase_report_counts_each_phrase():
     rows = ac.phrase_report(date(2026, 10, 1), count=lambda q: 10, out=lambda s: None)
-    n_phrases = sum(len(p) for _, _, p in ac.DIRECTIONS.values())
-    assert len(rows) == 1 + 2 * len(ac.STEM_CHECKS) + len(ac.DIRECTIONS) + n_phrases
+    n_phrases = sum(len(p) for _, _, p, _ in ac.DIRECTIONS.values())
+    assert len(rows) == 1 + 2 * len(ac.STEM_CHECKS) + len(ac.GROUPS) + len(ac.DIRECTIONS) + n_phrases
     only = ac.phrase_report(date(2026, 10, 1), count=lambda q: 10, out=lambda s: None, only="robots")
     assert len(only) == 2 + len(ac.DIRECTIONS["robots"][2])
 
@@ -116,10 +116,32 @@ def test_phrase_report_stops_with_partial_result():
 
 
 def test_no_bare_ambiguous_words():
-    for _, _, phrases in ac.DIRECTIONS.values():
-        for bad in ("oversight", "alignment", "agentic", "scheming", "interpretability"):
-            assert bad not in phrases
-        assert len({p.lower() for p in phrases}) == len(phrases)
+    for _, _, phrases, _ in ac.DIRECTIONS.values():
+        labels = [ac.label(p).lower() for p in phrases]
+        for bad in ("oversight", "alignment", "agentic", "scheming", "interpretability", "robot"):
+            assert bad not in labels                                     # «robot» - лише в парі з моделлю ШІ
+        assert len(set(labels)) == len(labels)
+
+
+def test_and_phrase_and_groups():
+    q = ac.build_query(date(2026, 10, 1), [(["robot", "humanoid"], ["LLM"])])
+    assert '((ti:"robot" OR abs:"robot" OR ti:"humanoid" OR abs:"humanoid") AND (ti:"LLM" OR abs:"LLM"))' in q
+    assert set(ac.GROUPS) == {g for *_, g in ac.DIRECTIONS.values()}
+    res = {r.metric_id: r for r in make([], lambda q: 100 if "abs:" not in q else 5).fetch_series()}
+    assert "arxiv_group_autonomy" in res and "arxiv_group_oversight" in res
+    assert res["arxiv_group_oversight"].points[0][1] == 5.0
+
+
+def test_long_group_query_goes_by_post(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ac, "get_with_retry", lambda url, **k: calls.append(k.get("method", "GET")) or
+                        type("R", (), {"text": FEED.format(n=7)})())
+    c = ac.ArxivCounts.__new__(ac.ArxivCounts)
+    c._calls, c.sleep = 0, lambda s: None
+    long_q = ac.build_query(date(2026, 10, 1), ac.group_phrases(ac.DIRECTIONS, "autonomy"))
+    assert c.count(long_q) == 7 and calls == ["POST"]
+    c.count(ac.build_query(date(2026, 10, 1), None))
+    assert calls[-1] == "GET"
 
 
 def test_changed_phrase_list_recomputes_history():

@@ -43,12 +43,13 @@ def redact(text: str | None) -> str | None:
 
 
 def get_with_retry(url: str, *, pauses: tuple[float, ...] = DEFAULT_PAUSES,
-                   sleep=time.sleep, **kwargs) -> requests.Response:
-    """Повертає відповідь з кодом 2xx або кидає останню помилку (вже з вирізаними ключами)."""
+                   sleep=time.sleep, method: str = "GET", **kwargs) -> requests.Response:
+    """Повертає відповідь з кодом 2xx або кидає останню помилку (вже з вирізаними ключами).
+    method="POST" - те саме для POST (напр., довгі запити arXiv, що не вміщаються в адресу)."""
     attempts = len(pauses) + 1
     for i in range(attempts):
         try:
-            resp = requests.get(url, **kwargs)
+            resp = requests.get(url, **kwargs) if method == "GET" else requests.post(url, **kwargs)
             if resp.status_code in RETRY_STATUS and i < attempts - 1:
                 log.warning(f"{url}: HTTP {resp.status_code}, спроба {i + 1}/{attempts}; повтор через {pauses[i]} с")
                 sleep(pauses[i])
