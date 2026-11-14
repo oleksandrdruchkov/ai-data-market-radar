@@ -51,7 +51,7 @@ jobs:
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
         run: python -m collectors.jobs_adzuna
 
-      - name: Jobs - DeepSeek (APAC, ручний список)
+      - name: Jobs - DeepSeek (APAC, сторінка MokaHR)
         if: ${{ !cancelled() }}
         run: python -m collectors.jobs_deepseek
 

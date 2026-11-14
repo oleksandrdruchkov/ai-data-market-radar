@@ -22,3 +22,6 @@ jobs:
           pip install -r requirements.txt cryptography
       - name: Probe MokaHR
         run: python -m tools.probe_mokahr
+      - name: Dry run - збирач DeepSeek (без запису)
+        if: ${{ !cancelled() }}
+        run: python -m collectors.jobs_deepseek --dry-run
