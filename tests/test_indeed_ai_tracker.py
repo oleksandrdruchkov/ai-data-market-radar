@@ -8,7 +8,7 @@ import pytest
 
 from collectors import indeed_ai_tracker as t
 
-CSV = ("﻿date,jobcountry,AI_share\n"
+CSV = ("﻿date,jobcountry,AI_share_postings\n"
        "2019-01-02,US,1.80\n"
        "2019-01-01,US,1.75\n"
        "2019-01-01,GB,2.10\n"

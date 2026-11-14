@@ -6,7 +6,7 @@ collectors/indeed_ai_tracker.py
                     (machine learning, data science, artificial intelligence тощо)
 
 Джерело - Indeed Hiring Lab AI Tracker, репозиторій github.com/hiring-lab/ai-tracker,
-файл AI_posting.csv: колонки date, jobcountry, *_share. Ряд щоденний (ковзне
+файл AI_posting.csv: колонки date, jobcountry, AI_share_postings. Ряд щоденний (ковзне
 7-денне середнє), репозиторій оновлюється раз на місяць. Ліцензія CC BY 4.0:
 на табло підписувати «Indeed Hiring Lab AI Tracker».
 
@@ -40,7 +40,8 @@ METRIC_ID = "indeed_ai_share"
 def parse_ai_tracker_csv(text: str) -> dict[str, list[tuple[date, float]]]:
     """Чиста функція: {країна: [(дата, частка %)...]} за зростанням дати.
 
-    Колонки шукаються за назвою: date, jobcountry і перша, що закінчується на _share.
+    Колонки шукаються за назвою: date, jobcountry і перша, що містить «_share»
+    (у файлі вона зветься AI_share_postings; у README описана як xxx_share).
     Порожні значення пропускаються. Незнайомий формат або жодного рядка - помилка."""
     reader = csv.reader(io.StringIO(text.lstrip("﻿")))
     header = [h.strip() for h in (next(reader, None) or [])]
@@ -50,9 +51,9 @@ def parse_ai_tracker_csv(text: str) -> dict[str, list[tuple[date, float]]]:
         i_cc = low.index("jobcountry")
     except ValueError:
         raise ValueError(f"AI Tracker: немає колонок date/jobcountry: {header[:6]}") from None
-    shares = [i for i, h in enumerate(low) if h.endswith("_share")]
+    shares = [i for i, h in enumerate(low) if "_share" in h]
     if not shares:
-        raise ValueError(f"AI Tracker: немає колонки *_share: {header[:6]}")
+        raise ValueError(f"AI Tracker: немає колонки з _share: {header[:6]}")
     i_val = shares[0]
 
     out: dict[str, list[tuple[date, float]]] = {}
