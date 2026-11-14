@@ -108,6 +108,44 @@ def show_record(r: dict):
                 st.markdown(f"- {line}")
 
 
+def render_phrase_candidates(db: Db) -> None:
+    """Нові терміни з досліджень, яких не ловить жодна фраза напрямів ArXiv."""
+    st.subheader("Нові терміни для напрямів ArXiv")
+    st.caption("Навички зі статей минулого місяця, яких не знаходить жодна фраза. Додана фраза "
+               "потрапляє в підрахунок, і вся історія перераховується новим списком (до 15 хв "
+               "під час наступного щоденного запуску). Відхилена більше не пропонується.")
+    try:
+        cands = review.phrase_candidates(db)
+    except Exception as e:
+        st.caption(f"Кандидати недоступні: {str(e)[:200]}")
+        return
+    if not cands:
+        st.info("Нових термінів немає.")
+        return
+    names = review.DIRECTION_NAMES
+    keys = list(names)
+    for c in cands:
+        key = c["skill_norm"]
+        with st.container(border=True):
+            arx = c.get("n_arxiv_month")
+            st.markdown(f"**{c['phrase']}** · сигналів: {c.get('n_signals', 0)} · "
+                        f"статей в arXiv за місяць: {arx if arx is not None else '—'}")
+            for t in (c.get("example_titles") or [])[:3]:
+                st.caption(f"• {t}")
+            sug = c.get("suggested_direction")
+            col1, col2, col3 = st.columns([3, 1, 1])
+            direction = col1.selectbox("Напрям", keys, index=keys.index(sug) if sug in keys else 0,
+                                       format_func=lambda k: names[k], key=f"pd{key}")
+            if col2.button("➕ Додати", key=f"pa{key}", use_container_width=True):
+                review.decide_phrase(db, key, "added", direction)
+                st.session_state["review_msg"] = f"«{c['phrase']}» додано до напряму «{names[direction]}»."
+                st.rerun()
+            if col3.button("✖ Не стосується", key=f"pr{key}", use_container_width=True):
+                review.decide_phrase(db, key, "rejected")
+                st.session_state["review_msg"] = f"«{c['phrase']}» відхилено."
+                st.rerun()
+
+
 def render(db: Db | None = None) -> None:
     """Уся сторінка перевірки. Викликається з app.py (?review=1) і з pages/review.py."""
     st.markdown("[← Назад до радара](./)")
@@ -170,6 +208,9 @@ def render(db: Db | None = None) -> None:
                 st.session_state["review_msg"] = f"Рішення щодо запису {r['id']} скасовано."
                 st.cache_data.clear()
                 st.rerun()
+
+    st.divider()
+    render_phrase_candidates(db)
 
     st.divider()
     if st.button("Вийти"):

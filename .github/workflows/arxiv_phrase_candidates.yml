@@ -1,0 +1,28 @@
+name: ArXiv phrases - monthly candidates
+
+# Раз на місяць: нові навички з fct_arxiv_signals, яких не ловить жодна фраза напрямів.
+# Результат - на сторінці перевірки (?review=1), розділ «Нові терміни для напрямів ArXiv».
+on:
+  schedule:
+    - cron: '23 5 2 * *'      # 2-го числа о 05:23 UTC, за минулий місяць
+  workflow_dispatch:
+
+jobs:
+  candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Find phrase candidates
+        run: python -m metrics.arxiv_phrase_candidates

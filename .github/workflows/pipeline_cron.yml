@@ -59,6 +59,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m collectors.arxiv
 
+      - name: ArXiv counts by direction (без моделі)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 40
+        run: python -m collectors.arxiv_counts
+
       - name: Autonomy horizons + ECI (METR via Epoch)
         if: ${{ !cancelled() }}
         run: python -m collectors.epoch_horizons

@@ -83,3 +83,31 @@ def undo(db: Db, rec_id: int) -> dict:
     out = db.update(TABLE, {"verified": False, "verified_by": None, "verified_at": None,
                             "notes": note, "verification_log": _log(row, note)}, eq={"id": rec_id})
     return out[0] if out else {}
+
+
+# ---------------- кандидати у фрази напрямів ArXiv (sql/021_phrase_candidates.sql) ----------------
+
+PHRASE_TABLE = "ops_phrase_candidates"
+DIRECTION_NAMES = {
+    "agents": "Агенти, що діють самі",
+    "ai_science": "ШІ веде дослідження сам",
+    "robots": "Роботи і фізичний світ",
+    "reasoning": "Міркування",
+    "safety": "Безпека і контроль",
+}
+
+
+def phrase_candidates(db: Db, status: str = "new", limit: int = 50) -> list[dict]:
+    return db.select(PHRASE_TABLE, "*", eq={"status": status}, order="n_signals", desc=True, limit=limit)
+
+
+def decide_phrase(db: Db, skill_norm: str, status: str, direction: str | None = None) -> None:
+    """added - з напрямом (фраза піде в запит arxiv_counts); rejected - без; new - скасувати рішення."""
+    if status not in ("added", "rejected", "new"):
+        raise ValueError(f"Невідомий стан: {status}")
+    if status == "added" and direction not in DIRECTION_NAMES:
+        raise ValueError("Для додавання оберіть напрям")
+    db.update(PHRASE_TABLE, {"status": status,
+                             "direction": direction if status == "added" else None,
+                             "decided_at": iso(utcnow()) if status != "new" else None},
+              eq={"skill_norm": skill_norm})
