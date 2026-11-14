@@ -8,7 +8,7 @@ collectors/arxiv_counts.py
   arxiv_share_<напрям>   % статей місяця, що відповідають запиту напряму;
                          numerator = статей напряму, denominator = усіх статей
 
-Напрями (DIRECTIONS) - пошук за фразами в анотаціях. Одна стаття може потрапити в кілька
+Напрями (DIRECTIONS) - пошук за фразами в назві та анотації. Одна стаття може потрапити в кілька
 напрямів, тож частки не складаються в 100 %. Змінили запит напряму -> підніміть METHOD_VERSION,
 бо ряд змінює зміст.
 
@@ -21,6 +21,7 @@ arXiv просить не частіше одного запиту на 3 сек
 
 Змінні: ARXIV_COUNTS_START="2023-01-01"
 Запуск: python -m collectors.arxiv_counts
+Перевірка фраз (лише друк, без запису): python -m collectors.arxiv_counts --check
 """
 
 from __future__ import annotations
@@ -44,20 +45,53 @@ TOTAL_ID = "arxiv_papers_total"
 CATEGORIES = ["cs.AI", "cs.LG", "cs.CL", "cs.RO", "cs.MA"]
 
 # id -> (назва UA, назва EN, фрази для пошуку в анотації)
+# Фрази - лише такі, що в категоріях ШІ майже завжди означають саме цей напрям.
+# Багатозначні слова беруться у сполученні: не «oversight», а «scalable oversight».
+# Перевірити, скільки статей дає кожна фраза: python -m collectors.arxiv_counts --check
 DIRECTIONS: dict[str, tuple[str, str, list[str]]] = {
-    "agents": ("Агенти, що діють самі", "Autonomous agents",
-               ["LLM agent", "LLM agents", "autonomous agent", "autonomous agents", "agentic", "tool use"]),
-    "ai_science": ("ШІ веде дослідження сам", "AI doing research itself",
-                   ["AI scientist", "automated scientific discovery", "autonomous research",
-                    "automated research", "self-improving", "recursive self-improvement"]),
-    "robots": ("Роботи і фізичний світ", "Robots and the physical world",
-               ["robot", "robotic", "embodied", "vision-language-action", "humanoid"]),
-    "reasoning": ("Міркування", "Reasoning",
-                  ["test-time compute", "chain of thought", "chain-of-thought", "reasoning model",
-                   "reasoning models"]),
-    "safety": ("Безпека і контроль", "Safety and control",
-               ["AI safety", "AI alignment", "interpretability", "red teaming", "jailbreak",
-                "oversight"]),
+    "agents": ("Агенти, що діють самі", "Autonomous agents", [
+        "LLM agent", "LLM agents", "LLM-based agent", "LLM-based agents",
+        "language agent", "language agents", "AI agent", "AI agents",
+        "autonomous agent", "autonomous agents", "agentic",
+        "tool use", "tool-use", "tool calling", "function calling",
+        "computer use", "computer-use agent", "GUI agent", "GUI agents",
+        "web agent", "web agents", "coding agent", "coding agents",
+        "software engineering agent", "agent memory", "long-horizon agent",
+        "multi-agent LLM", "LLM-based multi-agent", "agent swarm",
+    ]),
+    "ai_science": ("ШІ веде дослідження сам", "AI doing research itself", [
+        "AI scientist", "AI scientists", "AI co-scientist",
+        "automated scientific discovery", "autonomous scientific discovery",
+        "autonomous research", "automated research", "research agent", "research agents",
+        "automated AI research", "AI research automation", "automating AI research",
+        "automated machine learning research", "automated alignment research",
+        "self-improving", "recursive self-improvement", "self-improving agent",
+        "automated hypothesis generation", "LLM-driven discovery",
+        "self-driving laboratory", "self-driving lab", "autonomous laboratory",
+    ]),
+    "robots": ("Роботи і фізичний світ", "Robots and the physical world", [
+        "robot", "robots", "robotic", "robotics", "humanoid",
+        "embodied", "embodied agent", "embodied AI",
+        "vision-language-action", "VLA model", "VLA models",
+        "dexterous manipulation", "robot manipulation", "robotic manipulation",
+        "sim-to-real", "robot learning", "legged locomotion",
+    ]),
+    "reasoning": ("Міркування", "Reasoning", [
+        "test-time compute", "test-time scaling", "inference-time compute", "inference-time scaling",
+        "chain of thought", "chain-of-thought", "long chain-of-thought",
+        "reasoning model", "reasoning models", "large reasoning model", "large reasoning models",
+        "reinforcement learning with verifiable rewards", "verifiable rewards",
+        "process reward model", "latent reasoning", "thinking tokens",
+    ]),
+    "safety": ("Безпека і контроль", "Safety and control", [
+        "AI safety", "AI alignment", "value alignment", "alignment of language models",
+        "interpretability", "mechanistic interpretability", "sparse autoencoder", "sparse autoencoders",
+        "red teaming", "red-teaming", "jailbreak", "jailbreaks", "jailbreaking",
+        "scalable oversight", "human oversight", "AI control", "chain-of-thought monitoring",
+        "deceptive alignment", "emergent misalignment", "scheming", "sandbagging",
+        "reward hacking", "evaluation awareness", "dangerous capabilities", "dangerous capability",
+        "model organisms", "corrigibility",
+    ]),
 }
 
 
@@ -85,7 +119,7 @@ def build_query(month: date, phrases: list[str] | None) -> str:
     when = f"submittedDate:[{first:%Y%m%d}0000 TO {last:%Y%m%d}2359]"
     parts = [f"({cats})"]
     if phrases:
-        parts.append("(" + " OR ".join(f'abs:"{p}"' for p in phrases) + ")")
+        parts.append("(" + " OR ".join(f'ti:"{p}" OR abs:"{p}"' for p in phrases) + ")")
     parts.append(when)
     return " AND ".join(parts)
 
@@ -174,5 +208,28 @@ class ArxivCounts(MetricSeriesCollector):
         return [total, *shares.values()]
 
 
+def phrase_report(month: date, count=None, sleep=time.sleep) -> list[tuple[str, str, int]]:
+    """Скільки статей місяця дає кожна фраза окремо - щоб знайти зашумлені фрази."""
+    c = ArxivCounts.__new__(ArxivCounts)
+    c.sleep, c._calls = sleep, 0
+    count = count or c.count
+    rows = [("всього", "", count(build_query(month, None)))]
+    for k, (_, _, phrases) in DIRECTIONS.items():
+        rows.append((k, "УСІ ФРАЗИ", count(build_query(month, phrases))))
+        for p in phrases:
+            rows.append((k, p, count(build_query(month, [p]))))
+    return rows
+
+
 if __name__ == "__main__":
-    ArxivCounts().run()
+    import sys
+    if "--check" in sys.argv:
+        t = date.today()
+        prev = date(t.year - (t.month == 1), 12 if t.month == 1 else t.month - 1, 1)
+        rows = phrase_report(prev)
+        total = rows[0][2]
+        print(f"Місяць {prev:%Y-%m}, усіх статей ШІ: {total}")
+        for k, p, n in rows[1:]:
+            print(f"{k:12} {n:6} {100 * n / total:6.2f} %  {p}")
+    else:
+        ArxivCounts().run()

@@ -24,7 +24,7 @@ def test_parse_total():
 def test_build_query_and_months():
     q = ac.build_query(date(2026, 2, 1), ["AI scientist", "self-improving"])
     assert "cat:cs.AI OR cat:cs.LG" in q
-    assert '(abs:"AI scientist" OR abs:"self-improving")' in q
+    assert '(ti:"AI scientist" OR abs:"AI scientist" OR ti:"self-improving" OR abs:"self-improving")' in q
     assert q.endswith("submittedDate:[202602010000 TO 202602282359]")
     assert "abs:" not in ac.build_query(date(2026, 2, 1), None)
     assert ac.months_between(date(2025, 11, 1), date(2026, 2, 14)) == [
@@ -62,3 +62,15 @@ def test_failed_total_blocks_shares():
         raise ValueError("arXiv впав")
     res = make([{"period_start": "2026-10-01"}], answers).fetch_series()
     assert all(r.error for r in res)                                    # нічого не пишеться
+
+
+def test_phrase_report_counts_each_phrase():
+    asked = []
+    rows = ac.phrase_report(date(2026, 10, 1), count=lambda q: asked.append(q) or 10)
+    n_phrases = sum(len(p) for _, _, p in ac.DIRECTIONS.values())
+    assert len(rows) == 1 + len(ac.DIRECTIONS) + n_phrases
+
+
+def test_no_bare_ambiguous_words():
+    for _, _, phrases in ac.DIRECTIONS.values():
+        assert "oversight" not in phrases and "alignment" not in phrases
