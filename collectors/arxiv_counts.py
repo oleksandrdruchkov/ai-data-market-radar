@@ -30,13 +30,13 @@ collectors/arxiv_counts.py
 неповний: is_estimate = true.
 
 arXiv обмежує частоту (429), тому пауза 6 с і не більше ARXIV_COUNTS_MAX_QUERIES запитів
-за запуск (130 = 10 місяців по 13 запитів). Місяць пишеться лише цілим (усі статті + усі напрями), а
+за запуск (140 = 10 місяців по 14 запитів). Місяць пишеться лише цілим (усі статті + усі напрями), а
 наступний запуск продовжує з останнього записаного місяця, тож історія з 2023 року
-збирається за 5 щоденних запусків.
+збирається за 5-6 щоденних запусків.
 
 Довгі запити (групи) йдуть методом POST: в адресу GET вони не вміщаються.
 
-Змінні: ARXIV_COUNTS_START="2023-01-01"   ARXIV_COUNTS_MAX_QUERIES=130
+Змінні: ARXIV_COUNTS_START="2023-01-01"   ARXIV_COUNTS_MAX_QUERIES=140
         PHRASE_CHECK_DIRECTION=agents  (для --check: лише один напрям, щоб не впертися в ліміт)
         PHRASE_CHECK_PHRASES="a;b;c"   (для --check: довільні фрази-кандидати замість напрямів)
 Запуск: python -m collectors.arxiv_counts
@@ -61,7 +61,7 @@ HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruch
 OPENSEARCH = "{http://a9.com/-/spec/opensearch/1.1/}totalResults"
 PAUSE_SECONDS = 6.0             # arXiv просить >= 3 с; на 3 с після ~80 запитів відповідав 429
 RETRY_PAUSES = (60, 180, 300)   # 429/5xx: arXiv відпускає обмеження лише через кілька хвилин
-MAX_QUERIES = 130               # запитів за один запуск; решта історії - наступного дня
+MAX_QUERIES = 140               # запитів за один запуск; решта історії - наступного дня
 METHOD_VERSION = "v2"           # v2: групи, нагляд у п'яти напрямах, роботи = робот + модель ШІ
 POST_ABOVE = 1800               # довший запит - методом POST
 TOTAL_ID = "arxiv_papers_total"
@@ -134,7 +134,17 @@ DIRECTIONS: dict[str, tuple[str, str, list[Phrase], str]] = {
     "risk": ("Запобігання ризикам для безпеки та прав людини", "Preventing risks to safety and rights", [
         "AI safety", "AI alignment", "value alignment", "alignment of language models",
     ], "oversight"),
+    # Ст. 14(4)(e): людина має змогу втрутитися в роботу системи або зупинити її («стоп»).
+    # Статей мало (жовтень 2026: 3 з 14 657), тож частка шумна; стрибок кількості -
+    # попередження в ops_quality_alerts (STOP_ALERT_*).
+    "stop_resistance": ("Опір зупинці та втручанню людини", "Resistance to human interruption", [
+        "self-preservation", "shutdown resistance", "shutdown avoidance", "resist modification",
+        "self-defense", "self-protection", "self-replication",
+    ], "oversight"),
 }
+
+STOP_ALERT_MIN = 10        # попередження, якщо за завершений місяць статей щонайменше стільки
+STOP_ALERT_FACTOR = 3.0    # ... і втричі більше за середнє попередніх 12 місяців
 
 
 def label(p: Phrase) -> str:
@@ -230,6 +240,7 @@ def parse_total(xml_text: str) -> int:
 
 
 class ArxivCounts(MetricSeriesCollector):
+    pending_alerts: list[dict] = []
     source = "arxiv_counts"
     collector_version = "1"
     method_version = METHOD_VERSION
@@ -277,6 +288,43 @@ class ArxivCounts(MetricSeriesCollector):
                                   pauses=RETRY_PAUSES, sleep=self.sleep)
         return parse_total(resp.text)
 
+    def stop_resistance_alerts(self, series: SeriesResult | None) -> list[dict]:
+        """Попередження лише для останнього завершеного місяця, зібраного в цьому запуску."""
+        if not series or not series.points:
+            return []
+        done = [d for d, _ in series.points if not series.extra[d]["is_estimate"]]
+        if not done:
+            return []
+        m = done[-1]
+        n = series.extra[m]["numerator"]
+        try:
+            prev = self.db.select("fct_metric_values", "period_start,numerator",
+                                  eq={"metric_id": share_id("stop_resistance"), "region": "GLOBAL",
+                                      "method_version": self.method_version},
+                                  order="period_start", desc=True, limit=24)
+        except Exception:
+            prev = []
+        hist = {date.fromisoformat(str(r["period_start"])[:10]): float(r.get("numerator") or 0) for r in prev}
+        hist.update({d: series.extra[d]["numerator"] for d, _ in series.points})
+        history = [hist[d] for d in sorted(hist) if d < m]
+        alert, threshold = stop_signal(history, n)
+        if not alert:
+            return []
+        msg = (f"{m:%Y-%m}: статей про опір зупинці та втручанню людини {int(n)} "
+               f"(поріг {threshold:.0f}; середнє попередніх місяців {sum(history[-12:]) / max(1, len(history[-12:])):.1f})")
+        self.log.warning(msg)
+        return [{"source": self.source, "check_name": "signal_stop_resistance", "severity": "warning",
+                 "message": msg, "value": n, "threshold": round(threshold, 1)}]
+
+    def run(self) -> dict:
+        stats = super().run()
+        if self.pending_alerts:
+            try:
+                self.db.insert_alerts(self.pending_alerts)
+            except Exception as e:
+                self.log.warning(f"Попередження не записано: {e}")
+        return stats
+
     def fetch_series(self) -> list[SeriesResult]:
         ids = {k: share_id(k) for k in self.directions} | {f"group:{g}": group_id(g) for g in GROUPS}
         start = min(self.since(TOTAL_ID, "GLOBAL"), *(self.since(mid, "GLOBAL") for mid in ids.values()))
@@ -315,12 +363,22 @@ class ArxivCounts(MetricSeriesCollector):
                 shares[k].extra[m] = {"period_end": last.isoformat(), "is_estimate": partial,
                                       "numerator": float(n), "denominator": float(n_all)}
 
+        self.pending_alerts = self.stop_resistance_alerts(shares.get("stop_resistance"))
+
         if self.stop_reason:
             self.log.warning(f"Зупинка: {self.stop_reason}")
             if not total.points:                        # не зібрано жодного місяця - це помилка запуску
                 for r in (total, *shares.values()):
                     r.error = self.stop_reason
         return [total, *shares.values()]
+
+
+def stop_signal(history: list[float], n: float) -> tuple[bool, float]:
+    """Чиста функція: чи є стрибок статей про опір зупинці. history - кількості попередніх
+    місяців (до 12). Повертає (попередження?, поріг)."""
+    avg = sum(history[-12:]) / len(history[-12:]) if history else 0.0
+    threshold = max(STOP_ALERT_MIN, STOP_ALERT_FACTOR * avg)
+    return n >= threshold, threshold
 
 
 def phrase_report(month: date, count=None, sleep=time.sleep, only: str | None = None,
