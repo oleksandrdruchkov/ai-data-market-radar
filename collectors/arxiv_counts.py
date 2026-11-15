@@ -261,12 +261,15 @@ class ArxivCounts(MetricSeriesCollector):
             return []
 
     def since(self, metric_id: str, region: str) -> date:
-        """Перший запуск або змінений список фраз - уся історія з ARXIV_COUNTS_START;
-        інакше - два останні місяці або місяць, на якому перервався минулий збір."""
-        rows = self.db.select("fct_metric_values", "period_start,method_version",
-                              eq={"metric_id": metric_id, "region": region},
+        """Немає рядків поточної версії методу (перший запуск або змінений список фраз) -
+        уся історія з ARXIV_COUNTS_START; інакше - два останні місяці або місяць, на якому
+        перервався минулий збір. Рядки старих версій не враховуються: інакше пізніший
+        місяць зі старою версією щоразу повертав би збір на початок історії."""
+        rows = self.db.select("fct_metric_values", "period_start",
+                              eq={"metric_id": metric_id, "region": region,
+                                  "method_version": self.method_version},
                               order="period_start", desc=True, limit=1)
-        if not rows or rows[0].get("method_version") != self.method_version:
+        if not rows:
             return date.fromisoformat(os.getenv("ARXIV_COUNTS_START", "2023-01-01")).replace(day=1)
         y, m = self.today.year, self.today.month - 1
         if m == 0:
