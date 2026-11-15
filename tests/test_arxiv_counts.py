@@ -32,11 +32,18 @@ def test_build_query_and_months():
 
 
 class FakeDb:
+    """Підставна база. Зважає на фільтр eq (лише за полями, які є в рядку), порядок і limit -
+    як справжня: рядок іншої версії методу на запит за поточною версією не повертається."""
+
     def __init__(self, rows):
         self.rows = rows
 
-    def select(self, *a, **k):
-        return self.rows
+    def select(self, *a, eq=None, order=None, desc=False, limit=None, **k):
+        rows = [r for r in self.rows
+                if all(r[f] == v for f, v in (eq or {}).items() if f in r)]
+        if order:
+            rows = sorted(rows, key=lambda r: str(r.get(order) or ""), reverse=desc)
+        return rows[:limit] if limit else rows
 
 
 VER = f"{ac.METHOD_VERSION}-{ac.fingerprint(ac.DIRECTIONS)}"
@@ -145,8 +152,17 @@ def test_long_group_query_goes_by_post(monkeypatch):
 
 
 def test_changed_phrase_list_recomputes_history():
+    # у базі лише рядки старого списку фраз -> уся історія заново
     c = make([{"period_start": "2026-10-01", "method_version": "v1-oldlist"}], lambda q: 1)
     assert c.since("arxiv_papers_total", "GLOBAL") == date(2023, 1, 1)
+
+
+def test_later_old_version_rows_do_not_restart_backfill():
+    # Перерахунок новим списком дійшов до 2023-10, а пізніші місяці ще старої версії.
+    # Збір має продовжитись з 2023-10, а не щоразу повертатись на 2023-01.
+    c = make([{"period_start": "2023-10-01", "method_version": VER},
+              {"period_start": "2024-05-01", "method_version": "v1-oldlist"}], lambda q: 1)
+    assert c.since("arxiv_papers_total", "GLOBAL") == date(2023, 10, 1)
 
 
 def test_merge_phrases_and_fingerprint():
