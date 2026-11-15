@@ -38,6 +38,7 @@ arXiv обмежує частоту (429), тому пауза 6 с і не бі
 
 Змінні: ARXIV_COUNTS_START="2023-01-01"   ARXIV_COUNTS_MAX_QUERIES=130
         PHRASE_CHECK_DIRECTION=agents  (для --check: лише один напрям, щоб не впертися в ліміт)
+        PHRASE_CHECK_PHRASES="a;b;c"   (для --check: довільні фрази-кандидати замість напрямів)
 Запуск: python -m collectors.arxiv_counts
 Перевірка фраз (лише друк, без запису): python -m collectors.arxiv_counts --check
 """
@@ -360,6 +361,25 @@ def phrase_report(month: date, count=None, sleep=time.sleep, only: str | None = 
     return rows
 
 
+def custom_report(month: date, phrases: list[str], count=None, sleep=time.sleep,
+                  out=print) -> list[tuple[str, int]]:
+    """Скільки статей місяця дають довільні фрази (кандидати в напрями) - разом і окремо."""
+    c = ArxivCounts.__new__(ArxivCounts)
+    c.sleep, c._calls = sleep, 0
+    count = count or c.count
+    rows: list[tuple[str, int]] = []
+    try:
+        total = count(build_query(month, None))
+        out(f"Місяць {month:%Y-%m}, усіх статей ШІ: {total}")
+        for lbl, ph in [("УСІ ФРАЗИ", phrases), *((p, [p]) for p in phrases)]:
+            n = count(build_query(month, ph))
+            rows.append((lbl, n))
+            out(f"кандидат {n:6} {100 * n / total:6.2f} %  {lbl}")
+    except Exception as e:
+        out(f"ЗУПИНЕНО після {len(rows)} рядків: {type(e).__name__}: {str(e)[:200]}")
+    return rows
+
+
 def probe(sleep=time.sleep) -> None:
     """Діагностика: які частини запиту arXiv приймає. Друкує статус кожного варіанта."""
     import requests
@@ -394,6 +414,10 @@ if __name__ == "__main__":
     elif "--check" in sys.argv:
         t = date.today()
         prev = date(t.year - (t.month == 1), 12 if t.month == 1 else t.month - 1, 1)
-        phrase_report(prev, only=os.getenv("PHRASE_CHECK_DIRECTION") or None)
+        custom = [x.strip() for x in os.getenv("PHRASE_CHECK_PHRASES", "").split(";") if x.strip()]
+        if custom:
+            custom_report(prev, custom)
+        else:
+            phrase_report(prev, only=os.getenv("PHRASE_CHECK_DIRECTION") or None)
     else:
         ArxivCounts().run()
