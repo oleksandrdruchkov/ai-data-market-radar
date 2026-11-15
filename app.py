@@ -183,6 +183,7 @@ def init_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
+import ui_overview
 
 # Сторінка перевірки записів кола лідерів (вхід за паролем): ?review=1
 # Відкривається тут же, щоб не залежати від того, чи Streamlit підхопив pages/review.py.
@@ -377,6 +378,12 @@ def apply_clean_layout(fig, height=250):
     )
     return fig
 
+# ==========================================
+# ГОЛОВНИЙ ГРАФІК: У СКІЛЬКИ РАЗІВ БІЛЬШЕ, НІЖ У ГРУДНІ 2023 (ui_overview.py)
+# ==========================================
+ui_overview.render_growth(supabase, is_en)
+st.markdown("<br>", unsafe_allow_html=True)
+
 selected_view = st.selectbox(
     "Select Analytics View",
     options=[L["tab_demand"], L["tab_future"]],
@@ -472,469 +479,478 @@ else:
         st.caption(L["empty_arxiv"])
 
 # ==========================================
-# ЧАСОВИЙ ГРАФІК: АВТОНОМНІСТЬ МОДЕЛІ-ЛІДЕРА У ШКАЛІ SAI_T
+# ДОСЛІДЖЕННЯ ШІ: ЗРОСТАННЯ АВТОНОМНОСТІ ПРОТИ ЛЮДСЬКОГО НАГЛЯДУ (ui_overview.py)
 # ==========================================
-# Формула SAI_T, еталон і стеля METR визначені в одному місці - core/scales.py
-# (той самий модуль рахує щоденні значення в fct_metric_values).
-from core.scales import sai_t, hours_at_sai_t, beyond_ceiling, INSTRUMENT_CEILING_H, REFERENCE_H
-DOUBLING_RANGE_MONTHS = (3.5, 7.0)     # історичний діапазон подвоєння спроможностей
-PROJECTION_MAX_YEARS = 6
-DAYS_PER_MONTH = 30.4375
-REQUIRED_COLS = {"source", "metric", "model_name", "release_date", "value_hours"}
-HISTORY_START = pd.Timestamp("2023-01-01")   # за замовчуванням показуємо еру GPT-4 і далі
-show_full = False
-
-# series_id = "<source>|<metric>" -> (підпис EN, підпис UA, колір)
-SERIES_META = {
-    "METR|T50":                 ("METR T50 (software, 50%)",      "METR T50 (ПЗ-завдання, 50%)", "#4f46e5"),
-    "METR|T80":                 ("METR T80 (80%)",                "METR T80 (80%)",              "#0284c7"),
-    "UK_AISI_CYBER|T80":        ("UK AISI cyber T80",             "UK AISI кібер T80",           "#dc2626"),
-    "REDWOOD_NOCOT|NOCOT_T50":  ("Redwood no-CoT T50 (auxiliary)", "Redwood no-CoT T50 (допоміжна)", "#64748b"),
-}
-DEFAULT_SERIES = ["METR|T50", "UK_AISI_CYBER|T80"]
-
-def series_label(sid):
-    meta = SERIES_META.get(sid)
-    if meta:
-        return meta[0] if is_en else meta[1]
-    return sid.replace("|", " ")
-
-def series_color(sid):
-    meta = SERIES_META.get(sid)
-    return meta[2] if meta else "#0f766e"
-
-def short_name(name):
-    """gpt-5-2025-08-07 -> gpt-5 (дата в кінці назви зайва для підпису)."""
-    return re.sub(r"[-_]?20\d{2}-?\d{2}-?\d{2}$", "", str(name))
-
-def hex_to_rgba(color, alpha):
-    c = color.lstrip("#")
-    r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
-    return f"rgba({r},{g},{b},{alpha})"
-
-def project_sai(t0_hours, doubling_months, months):
-    """SAI_T при експоненційному зростанні горизонту; обрізається на 100% (еталон)."""
-    grown = t0_hours * np.power(2.0, np.asarray(months, dtype=float) / doubling_months)
-    return np.minimum(sai_t(grown), 100.0)
-
-def fmt_hours(h):
-    return f"{h:.1f}" if h < 100 else f"{h:.0f}"
-
 st.markdown("<br>", unsafe_allow_html=True)
-st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['horizon_title']}</div>", unsafe_allow_html=True)
+ui_overview.render_research(supabase, is_en)
+st.markdown("<br>", unsafe_allow_html=True)
 
-if df_hor.empty or not REQUIRED_COLS.issubset(df_hor.columns):
-    st.info("Data synchronization in progress." if is_en else "Триває збір даних горизонтів.")
-    if hor_error:
-        st.caption(f"⚠️ fct_autonomy_horizons: {hor_error}")
-    elif not df_hor.empty:
-        st.caption("⚠️ Missing columns: " + ", ".join(sorted(REQUIRED_COLS - set(df_hor.columns))))
-else:
-    d = df_hor.copy()
-    d["release_date"] = pd.to_datetime(d["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
-    d["value_hours"] = pd.to_numeric(d["value_hours"], errors="coerce")
-    for ci_col in ("ci_low", "ci_high"):
-        d[ci_col] = pd.to_numeric(d[ci_col], errors="coerce") if ci_col in d.columns else np.nan
-    d = d.dropna(subset=["release_date", "value_hours", "model_name"])
-    d = d[d["value_hours"] > 0]
-    d["series_id"] = d["source"].astype(str) + "|" + d["metric"].astype(str)
+with st.expander("Detailed series: autonomy horizon and capability index (ECI)" if is_en
+                 else "Детальні ряди: горизонт автономності та індекс здатності (ECI)"):
+    # ==========================================
+    # ЧАСОВИЙ ГРАФІК: АВТОНОМНІСТЬ МОДЕЛІ-ЛІДЕРА У ШКАЛІ SAI_T
+    # ==========================================
+    # Формула SAI_T, еталон і стеля METR визначені в одному місці - core/scales.py
+    # (той самий модуль рахує щоденні значення в fct_metric_values).
+    from core.scales import sai_t, hours_at_sai_t, beyond_ceiling, INSTRUMENT_CEILING_H, REFERENCE_H
+    DOUBLING_RANGE_MONTHS = (3.5, 7.0)     # історичний діапазон подвоєння спроможностей
+    PROJECTION_MAX_YEARS = 6
+    DAYS_PER_MONTH = 30.4375
+    REQUIRED_COLS = {"source", "metric", "model_name", "release_date", "value_hours"}
+    HISTORY_START = pd.Timestamp("2023-01-01")   # за замовчуванням показуємо еру GPT-4 і далі
+    show_full = False
 
-    available = sorted(d["series_id"].unique().tolist(), key=lambda s: (s not in SERIES_META, list(SERIES_META).index(s) if s in SERIES_META else 0, s))
-    defaults = [s for s in DEFAULT_SERIES if s in available] or available[:1]
+    # series_id = "<source>|<metric>" -> (підпис EN, підпис UA, колір)
+    SERIES_META = {
+        "METR|T50":                 ("METR T50 (software, 50%)",      "METR T50 (ПЗ-завдання, 50%)", "#4f46e5"),
+        "METR|T80":                 ("METR T80 (80%)",                "METR T80 (80%)",              "#0284c7"),
+        "UK_AISI_CYBER|T80":        ("UK AISI cyber T80",             "UK AISI кібер T80",           "#dc2626"),
+        "REDWOOD_NOCOT|NOCOT_T50":  ("Redwood no-CoT T50 (auxiliary)", "Redwood no-CoT T50 (допоміжна)", "#64748b"),
+    }
+    DEFAULT_SERIES = ["METR|T50", "UK_AISI_CYBER|T80"]
 
-    selected_series = st.multiselect(
-        "Series" if is_en else "Ряди даних",
-        options=available,
-        default=defaults,
-        format_func=series_label,
-        label_visibility="collapsed"
-    )
-    col_full, col_proj = st.columns(2)
-    with col_full:
-        show_full = st.checkbox(
-            "Full history (from 2019)" if is_en else "Вся історія (з 2019)",
-            value=False
-        )
-    with col_proj:
-        show_proj = st.checkbox(
-            "Projection to the reference" if is_en else "Проєкція до еталона",
-            value=True
-        )
+    def series_label(sid):
+        meta = SERIES_META.get(sid)
+        if meta:
+            return meta[0] if is_en else meta[1]
+        return sid.replace("|", " ")
 
-    d_sel = d[d["series_id"].isin(selected_series)]
-    if not show_full:
-        d_sel = d_sel[d_sel["release_date"] >= HISTORY_START]
+    def series_color(sid):
+        meta = SERIES_META.get(sid)
+        return meta[2] if meta else "#0f766e"
 
-    if not selected_series:
-        st.caption("Select at least one series." if is_en else "Оберіть хоча б один ряд.")
-    elif d_sel.empty:
-        st.caption("No data for the selected series." if is_en else "Немає даних для обраних рядів.")
+    def short_name(name):
+        """gpt-5-2025-08-07 -> gpt-5 (дата в кінці назви зайва для підпису)."""
+        return re.sub(r"[-_]?20\d{2}-?\d{2}-?\d{2}$", "", str(name))
+
+    def hex_to_rgba(color, alpha):
+        c = color.lstrip("#")
+        r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
+        return f"rgba({r},{g},{b},{alpha})"
+
+    def project_sai(t0_hours, doubling_months, months):
+        """SAI_T при експоненційному зростанні горизонту; обрізається на 100% (еталон)."""
+        grown = t0_hours * np.power(2.0, np.asarray(months, dtype=float) / doubling_months)
+        return np.minimum(sai_t(grown), 100.0)
+
+    def fmt_hours(h):
+        return f"{h:.1f}" if h < 100 else f"{h:.0f}"
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['horizon_title']}</div>", unsafe_allow_html=True)
+
+    if df_hor.empty or not REQUIRED_COLS.issubset(df_hor.columns):
+        st.info("Data synchronization in progress." if is_en else "Триває збір даних горизонтів.")
+        if hor_error:
+            st.caption(f"⚠️ fct_autonomy_horizons: {hor_error}")
+        elif not df_hor.empty:
+            st.caption("⚠️ Missing columns: " + ", ".join(sorted(REQUIRED_COLS - set(df_hor.columns))))
     else:
-        show_ceiling = "METR|T50" in selected_series
-        primary_sid = "METR|T50" if show_ceiling else selected_series[0]
-        x_min, x_max = d_sel["release_date"].min(), d_sel["release_date"].max()
+        d = df_hor.copy()
+        d["release_date"] = pd.to_datetime(d["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
+        d["value_hours"] = pd.to_numeric(d["value_hours"], errors="coerce")
+        for ci_col in ("ci_low", "ci_high"):
+            d[ci_col] = pd.to_numeric(d[ci_col], errors="coerce") if ci_col in d.columns else np.nan
+        d = d.dropna(subset=["release_date", "value_hours", "model_name"])
+        d = d[d["value_hours"] > 0]
+        d["series_id"] = d["source"].astype(str) + "|" + d["metric"].astype(str)
 
-        fig_tl = go.Figure()
-        notes = []
-        primary = None   # дані лідера основного ряду для проєкції
+        available = sorted(d["series_id"].unique().tolist(), key=lambda s: (s not in SERIES_META, list(SERIES_META).index(s) if s in SERIES_META else 0, s))
+        defaults = [s for s in DEFAULT_SERIES if s in available] or available[:1]
 
-        for sid in selected_series:
-            sub = d_sel[d_sel["series_id"] == sid].sort_values("release_date")
-            # одна точка на модель (найсвіжіший замір)
-            sub = sub.drop_duplicates(subset=["model_name"], keep="last").sort_values("release_date").reset_index(drop=True)
-            if sub.empty:
-                continue
+        selected_series = st.multiselect(
+            "Series" if is_en else "Ряди даних",
+            options=available,
+            default=defaults,
+            format_func=series_label,
+            label_visibility="collapsed"
+        )
+        col_full, col_proj = st.columns(2)
+        with col_full:
+            show_full = st.checkbox(
+                "Full history (from 2019)" if is_en else "Вся історія (з 2019)",
+                value=False
+            )
+        with col_proj:
+            show_proj = st.checkbox(
+                "Projection to the reference" if is_en else "Проєкція до еталона",
+                value=True
+            )
 
-            color = series_color(sid)
-            name = series_label(sid)
-            sub["frontier"] = sub["value_hours"].cummax()
-            sub["is_record"] = sub["value_hours"] >= sub["frontier"]
-            recs = sub[sub["is_record"]].reset_index(drop=True)
-            others = sub[~sub["is_record"]]
+        d_sel = d[d["series_id"].isin(selected_series)]
+        if not show_full:
+            d_sel = d_sel[d_sel["release_date"] >= HISTORY_START]
 
-            # решта моделей - напівпрозорі точки
-            if not others.empty:
+        if not selected_series:
+            st.caption("Select at least one series." if is_en else "Оберіть хоча б один ряд.")
+        elif d_sel.empty:
+            st.caption("No data for the selected series." if is_en else "Немає даних для обраних рядів.")
+        else:
+            show_ceiling = "METR|T50" in selected_series
+            primary_sid = "METR|T50" if show_ceiling else selected_series[0]
+            x_min, x_max = d_sel["release_date"].min(), d_sel["release_date"].max()
+
+            fig_tl = go.Figure()
+            notes = []
+            primary = None   # дані лідера основного ряду для проєкції
+
+            for sid in selected_series:
+                sub = d_sel[d_sel["series_id"] == sid].sort_values("release_date")
+                # одна точка на модель (найсвіжіший замір)
+                sub = sub.drop_duplicates(subset=["model_name"], keep="last").sort_values("release_date").reset_index(drop=True)
+                if sub.empty:
+                    continue
+
+                color = series_color(sid)
+                name = series_label(sid)
+                sub["frontier"] = sub["value_hours"].cummax()
+                sub["is_record"] = sub["value_hours"] >= sub["frontier"]
+                recs = sub[sub["is_record"]].reset_index(drop=True)
+                others = sub[~sub["is_record"]]
+
+                # решта моделей - напівпрозорі точки
+                if not others.empty:
+                    fig_tl.add_trace(go.Scatter(
+                        x=others["release_date"], y=sai_t(others["value_hours"]),
+                        mode="markers",
+                        marker=dict(size=6, color=color, opacity=0.3),
+                        text=others["model_name"],
+                        customdata=others["value_hours"],
+                        hovertemplate="%{text}<br>%{customdata:.2f} h · SAI_T %{y:.0f}%<extra>" + name + "</extra>",
+                        showlegend=False
+                    ))
+
+                # лінія лідера (ступінчаста)
                 fig_tl.add_trace(go.Scatter(
-                    x=others["release_date"], y=sai_t(others["value_hours"]),
-                    mode="markers",
-                    marker=dict(size=6, color=color, opacity=0.3),
-                    text=others["model_name"],
-                    customdata=others["value_hours"],
-                    hovertemplate="%{text}<br>%{customdata:.2f} h · SAI_T %{y:.0f}%<extra>" + name + "</extra>",
+                    x=sub["release_date"], y=sai_t(sub["frontier"]),
+                    mode="lines",
+                    line=dict(color=color, width=2, shape="hv"),
+                    name=name,
+                    hoverinfo="skip"
+                ))
+
+                # рекордсмени: підписуємо лише останніх п'ять, щоб текст не накладався
+                n_rec = len(recs)
+                label_from = max(0, n_rec - 5)
+                rec_text = [short_name(n) if (sid == primary_sid and i >= label_from) else "" for i, n in enumerate(recs["model_name"])]
+                rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
+                # точки понад стелю набору задач METR - оцінка, а не надійний вимір:
+                # малюємо порожнім кружечком і пишемо це в підказці
+                is_metr = sid.startswith("METR|")
+                est = [is_metr and beyond_ceiling(v) for v in recs["value_hours"]]
+                est_note = ("<br><i>estimate: above the METR task ceiling (16 h)</i>" if is_en
+                            else "<br><i>оцінка: понад стелю задач METR (16 год)</i>")
+                fig_tl.add_trace(go.Scatter(
+                    x=recs["release_date"], y=sai_t(recs["value_hours"]),
+                    mode="markers+text",
+                    marker=dict(size=[11 if e else 9 for e in est], color=color,
+                                symbol=["circle-open" if e else "circle" for e in est],
+                                line=dict(width=2, color=color)),
+                    text=rec_text,
+                    textposition=rec_pos,
+                    textfont=dict(size=9, color="#0f172a"),
+                    hovertext=recs["model_name"],
+                    customdata=[[float(v), est_note if e else ""] for v, e in zip(recs["value_hours"], est)],
+                    hovertemplate="%{hovertext}<br>%{customdata[0]:.2f} h · SAI_T %{y:.0f}%%{customdata[1]}<extra>" + name + "</extra>",
                     showlegend=False
                 ))
 
-            # лінія лідера (ступінчаста)
+                last = recs.iloc[-1]
+
+                # довірчий інтервал останнього рекорду (вус у шкалі SAI_T)
+                if pd.notna(last["ci_low"]) and pd.notna(last["ci_high"]) and last["ci_low"] > 0:
+                    y_c = float(sai_t(last["value_hours"]))
+                    fig_tl.add_trace(go.Scatter(
+                        x=[last["release_date"]], y=[y_c],
+                        mode="markers",
+                        marker=dict(size=1, opacity=0, color=color),
+                        error_y=dict(type="data", symmetric=False,
+                                     array=[float(sai_t(last["ci_high"])) - y_c],
+                                     arrayminus=[y_c - float(sai_t(last["ci_low"]))],
+                                     color=color, thickness=1.5, width=5),
+                        hoverinfo="skip", showlegend=False
+                    ))
+
+                # підпис: останній вимір + час подвоєння лідера
+                line = f"**{name}:** " + (
+                    f"last measurement {sub['release_date'].max():%Y-%m-%d}" if is_en
+                    else f"останній вимір {sub['release_date'].max():%Y-%m-%d}"
+                )
+                dbl_months = None
+                if n_rec >= 2:
+                    span_days = (recs["release_date"].iloc[-1] - recs["release_date"].iloc[0]).days
+                    growth = recs["value_hours"].iloc[-1] / recs["value_hours"].iloc[0]
+                    if span_days > 0 and growth > 1:
+                        dbl_months = span_days / DAYS_PER_MONTH / np.log2(growth)
+                        line += (f", leader doubling ~{dbl_months:.1f} mo." if is_en
+                                 else f", подвоєння лідера ~{dbl_months:.1f} міс.")
+                notes.append(line)
+
+                if sid == primary_sid:
+                    primary = {
+                        "name": name, "color": color, "t0": last["release_date"],
+                        "T0": float(last["value_hours"]), "model": short_name(last["model_name"]),
+                        "ci_low": last["ci_low"], "ci_high": last["ci_high"],
+                        "dbl": dbl_months,
+                    }
+
+            # ---- проєкція напрямку до еталона (ілюстративна екстраполяція) ----
+            x_end = x_max + pd.Timedelta(days=200)
+            proj_caption = None
+            T_cross = hours_at_sai_t(100.0)              # горизонт, де SAI_T = 100%
+            if show_proj and primary and primary["T0"] < T_cross:
+                T0, t0, color = primary["T0"], primary["t0"], primary["color"]
+                d_c = primary["dbl"] if primary["dbl"] else float(np.sqrt(DOUBLING_RANGE_MONTHS[0] * DOUBLING_RANGE_MONTHS[1]))
+                d_f = min(DOUBLING_RANGE_MONTHS[0], d_c)
+                d_s = max(DOUBLING_RANGE_MONTHS[1], d_c)
+                n_dbl = float(np.log2(T_cross / T0))
+                m_end = min(n_dbl * d_s, PROJECTION_MAX_YEARS * 12.0)
+                months = np.linspace(0.0, m_end, 80)
+                dates = [t0 + pd.Timedelta(days=float(m) * DAYS_PER_MONTH) for m in months]
+
+                # смуга невизначеності між швидким і повільним подвоєнням
+                fig_tl.add_trace(go.Scatter(
+                    x=dates, y=project_sai(T0, d_s, months),
+                    mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False
+                ))
+                fig_tl.add_trace(go.Scatter(
+                    x=dates, y=project_sai(T0, d_f, months),
+                    mode="lines", line=dict(width=0),
+                    fill="tonexty", fillcolor=hex_to_rgba(color, 0.12),
+                    hoverinfo="skip", showlegend=False
+                ))
+                m_c = n_dbl * d_c
+                months_c = np.append(months[months < m_c], m_c) if m_c <= m_end else months
+                dates_c = [t0 + pd.Timedelta(days=float(m) * DAYS_PER_MONTH) for m in months_c]
+                fig_tl.add_trace(go.Scatter(
+                    x=dates_c, y=project_sai(T0, d_c, months_c),
+                    mode="lines", line=dict(color=color, width=2, dash="dot"),
+                    name="Projection (illustrative)" if is_en else "Проєкція (ілюстративна)",
+                    hoverinfo="skip"
+                ))
+
+                def cross_date(dm):
+                    return t0 + pd.Timedelta(days=n_dbl * dm * DAYS_PER_MONTH)
+
+                c_central = cross_date(d_c)
+                if n_dbl * d_c <= m_end:
+                    fig_tl.add_trace(go.Scatter(
+                        x=[c_central], y=[100.0],
+                        mode="markers+text",
+                        marker=dict(size=11, color=color, symbol="diamond"),
+                        text=[f"≈ {c_central:%Y-%m}"], textposition="bottom left",
+                        textfont=dict(size=10, color="#0f172a"),
+                        hoverinfo="skip", showlegend=False
+                    ))
+                x_end = dates[-1] + pd.Timedelta(days=60)
+
+                if is_en:
+                    proj_caption = (
+                        f"Distance to the reference from the latest record ({primary['model']}): ≈ {n_dbl:.1f} doublings. "
+                        f"At a doubling time of {d_c:.1f} months this is ≈ {c_central:%Y-%m} "
+                        f"(band for {d_f:.1f}–{d_s:.1f} months: {cross_date(d_f):%Y-%m} … {cross_date(d_s):%Y-%m})."
+                    )
+                else:
+                    proj_caption = (
+                        f"Відстань до еталона від останнього рекорду ({primary['model']}): ≈ {n_dbl:.1f} подвоєнь. "
+                        f"При подвоєнні кожні {d_c:.1f} міс. це ≈ {c_central:%Y-%m} "
+                        f"(смуга для {d_f:.1f}–{d_s:.1f} міс.: {cross_date(d_f):%Y-%m} … {cross_date(d_s):%Y-%m})."
+                    )
+
+            # критична точка: еталон 1 людино-рік (100%)
             fig_tl.add_trace(go.Scatter(
-                x=sub["release_date"], y=sai_t(sub["frontier"]),
-                mode="lines",
-                line=dict(color=color, width=2, shape="hv"),
-                name=name,
-                hoverinfo="skip"
+                x=[x_min, x_end], y=[100.0, 100.0],
+                mode="lines+text",
+                line=dict(color="#b91c1c", width=1.5),
+                text=["Reference: 1 human-year (2 080 h)" if is_en else "Еталон: 1 людино-рік (2 080 год)", ""],
+                textposition="bottom right",
+                textfont=dict(size=9, color="#b91c1c"),
+                hoverinfo="skip", showlegend=False
             ))
 
-            # рекордсмени: підписуємо лише останніх п'ять, щоб текст не накладався
-            n_rec = len(recs)
-            label_from = max(0, n_rec - 5)
-            rec_text = [short_name(n) if (sid == primary_sid and i >= label_from) else "" for i, n in enumerate(recs["model_name"])]
-            rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
-            # точки понад стелю набору задач METR - оцінка, а не надійний вимір:
-            # малюємо порожнім кружечком і пишемо це в підказці
-            is_metr = sid.startswith("METR|")
-            est = [is_metr and beyond_ceiling(v) for v in recs["value_hours"]]
-            est_note = ("<br><i>estimate: above the METR task ceiling (16 h)</i>" if is_en
-                        else "<br><i>оцінка: понад стелю задач METR (16 год)</i>")
+            # стеля вимірювань METR (16 год) у шкалі SAI_T
+            if show_ceiling:
+                fig_tl.add_trace(go.Scatter(
+                    x=[x_min, x_max], y=[float(sai_t(INSTRUMENT_CEILING_H))] * 2,
+                    mode="lines+text",
+                    line=dict(color="#dc2626", width=1, dash="dash"),
+                    text=["METR ceiling 16h" if is_en else "Стеля METR 16 год", ""],
+                    textposition="top right",
+                    textfont=dict(size=9, color="#dc2626"),
+                    hoverinfo="skip", showlegend=False
+                ))
+
+            # права вісь: ті самі позиції в годинах
+            hour_ticks = [0.1, 1, 4, 16, 64, 260, 1040, REFERENCE_H]
+            hour_text = [f"{h:g} h" if is_en else f"{h:g} год" for h in hour_ticks[:-1]] + \
+                        ["2080 h" if is_en else "2080 год"]
             fig_tl.add_trace(go.Scatter(
-                x=recs["release_date"], y=sai_t(recs["value_hours"]),
+                x=[x_min], y=[0], yaxis="y2", mode="markers",
+                marker=dict(opacity=0, size=1), hoverinfo="skip", showlegend=False
+            ))
+
+            pct_ticks = [0, 20, 40, 60, 80, 100]
+            fig_tl.update_layout(
+                height=400,
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                margin=dict(l=10, r=10, t=10, b=10),
+                font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+                xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_end], automargin=True),
+                yaxis=dict(
+                    range=[0, 110], tickvals=pct_ticks, ticktext=[f"{p}%" for p in pct_ticks],
+                    showgrid=True, gridcolor="#f1f5f9", automargin=True, title_standoff=8,
+                    title="SAI_T, % of reference" if is_en else "SAI_T, % від еталона"
+                ),
+                yaxis2=dict(
+                    overlaying="y", side="right", range=[0, 110],
+                    tickvals=[float(sai_t(h)) for h in hour_ticks], ticktext=hour_text,
+                    showgrid=False, tickfont=dict(size=9, color="#64748b"), automargin=True
+                ),
+                legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
+                showlegend=True
+            )
+            st.plotly_chart(fig_tl, use_container_width=True, theme=None, config={'displayModeBar': False})
+
+            if primary:
+                cur = float(sai_t(primary["T0"]))
+                cur_txt = f"{cur:.0f}%"
+                if pd.notna(primary["ci_low"]) and pd.notna(primary["ci_high"]) and primary["ci_low"] > 0:
+                    cur_txt += f" ({float(sai_t(primary['ci_low'])):.0f}–{float(sai_t(primary['ci_high'])):.0f}%)"
+                st.caption(
+                    f"**Current SAI_T of the leader ({primary['model']}):** {cur_txt}, horizon {fmt_hours(primary['T0'])} h."
+                    if is_en else
+                    f"**Поточний SAI_T лідера ({primary['model']}):** {cur_txt}, горизонт {fmt_hours(primary['T0'])} год."
+                )
+                if primary["name"] == series_label("METR|T50") and beyond_ceiling(primary["T0"]):
+                    st.caption(
+                        "○ Empty circle = estimate: the value is above the longest METR tasks (16 h), "
+                        "where the instrument no longer measures reliably."
+                        if is_en else
+                        "○ Порожній кружечок = оцінка: значення вище за найдовші задачі METR (16 год), "
+                        "де інструмент уже не вимірює надійно."
+                    )
+            for n in notes:
+                st.caption(n)
+            if proj_caption:
+                st.caption(proj_caption)
+                st.caption(
+                    "Illustrative extrapolation, not a forecast: it assumes exponential growth to continue. "
+                    "The reference is a scale of task length, not the moment of loss of control."
+                    if is_en else
+                    "Ілюстративна екстраполяція, а не прогноз: вона припускає, що експоненційне зростання триватиме. "
+                    "Еталон це шкала довжини завдання, а не момент втрати контролю."
+                )
+            st.caption(
+                "Series come from different benchmarks and are not directly comparable."
+                if is_en else
+                "Ряди походять з різних бенчмарків і не є прямо порівнюваними."
+            )
+
+    # ==========================================
+    # ЗАГАЛЬНА ЗДАТНІСТЬ МОДЕЛІ-ЛІДЕРА (EPOCH CAPABILITIES INDEX)
+    # ==========================================
+    ECI_COLOR = "#0d9488"
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['capability_title']}</div>", unsafe_allow_html=True)
+
+    if df_eci.empty or not {"model_name", "release_date", "eci"}.issubset(df_eci.columns):
+        st.info("Data synchronization in progress." if is_en else "Триває збір даних індексу здатності.")
+        if eci_error:
+            st.caption(f"⚠️ fct_capability_index: {eci_error}")
+    else:
+        e = df_eci.copy()
+        e["release_date"] = pd.to_datetime(e["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
+        for col in ("eci", "ci_low", "ci_high"):
+            e[col] = pd.to_numeric(e[col], errors="coerce") if col in e.columns else np.nan
+        e["label"] = e["display_name"].fillna(e["model_name"]) if "display_name" in e.columns else e["model_name"]
+        e = e.dropna(subset=["release_date", "eci"])
+        if not show_full:
+            e = e[e["release_date"] >= HISTORY_START]
+
+        if e.empty:
+            st.caption("No data for the selected period." if is_en else "Немає даних за обраний період.")
+        else:
+            e = e.sort_values("release_date").reset_index(drop=True)
+            e["frontier"] = e["eci"].cummax()
+            e["is_record"] = e["eci"] >= e["frontier"]
+            recs = e[e["is_record"]].reset_index(drop=True)
+            others = e[~e["is_record"]]
+
+            fig_eci = go.Figure()
+            if not others.empty:
+                fig_eci.add_trace(go.Scatter(
+                    x=others["release_date"], y=others["eci"],
+                    mode="markers",
+                    marker=dict(size=6, color=ECI_COLOR, opacity=0.25),
+                    text=others["label"],
+                    hovertemplate="%{text}<br>ECI %{y:.1f}<extra></extra>",
+                    showlegend=False
+                ))
+
+            fig_eci.add_trace(go.Scatter(
+                x=e["release_date"], y=e["frontier"],
+                mode="lines",
+                line=dict(color=ECI_COLOR, width=2, shape="hv"),
+                hoverinfo="skip",
+                showlegend=False
+            ))
+
+            n_rec = len(recs)
+            label_from = max(0, n_rec - 4)
+            rec_text = [str(n) if i >= label_from else "" for i, n in enumerate(recs["label"])]
+            rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
+            err_up = (recs["ci_high"] - recs["eci"]).fillna(0).clip(lower=0)
+            err_dn = (recs["eci"] - recs["ci_low"]).fillna(0).clip(lower=0)
+            fig_eci.add_trace(go.Scatter(
+                x=recs["release_date"], y=recs["eci"],
                 mode="markers+text",
-                marker=dict(size=[11 if e else 9 for e in est], color=color,
-                            symbol=["circle-open" if e else "circle" for e in est],
-                            line=dict(width=2, color=color)),
+                marker=dict(size=9, color=ECI_COLOR),
+                error_y=dict(type="data", symmetric=False, array=err_up, arrayminus=err_dn,
+                             color=ECI_COLOR, thickness=1, width=3),
                 text=rec_text,
                 textposition=rec_pos,
                 textfont=dict(size=9, color="#0f172a"),
-                hovertext=recs["model_name"],
-                customdata=[[float(v), est_note if e else ""] for v, e in zip(recs["value_hours"], est)],
-                hovertemplate="%{hovertext}<br>%{customdata[0]:.2f} h · SAI_T %{y:.0f}%%{customdata[1]}<extra>" + name + "</extra>",
+                hovertext=recs["label"],
+                hovertemplate="%{hovertext}<br>ECI %{y:.1f}<extra></extra>",
                 showlegend=False
             ))
 
-            last = recs.iloc[-1]
-
-            # довірчий інтервал останнього рекорду (вус у шкалі SAI_T)
-            if pd.notna(last["ci_low"]) and pd.notna(last["ci_high"]) and last["ci_low"] > 0:
-                y_c = float(sai_t(last["value_hours"]))
-                fig_tl.add_trace(go.Scatter(
-                    x=[last["release_date"]], y=[y_c],
-                    mode="markers",
-                    marker=dict(size=1, opacity=0, color=color),
-                    error_y=dict(type="data", symmetric=False,
-                                 array=[float(sai_t(last["ci_high"])) - y_c],
-                                 arrayminus=[y_c - float(sai_t(last["ci_low"]))],
-                                 color=color, thickness=1.5, width=5),
-                    hoverinfo="skip", showlegend=False
-                ))
-
-            # підпис: останній вимір + час подвоєння лідера
-            line = f"**{name}:** " + (
-                f"last measurement {sub['release_date'].max():%Y-%m-%d}" if is_en
-                else f"останній вимір {sub['release_date'].max():%Y-%m-%d}"
+            y_lo = float((e["ci_low"].fillna(e["eci"])).min()) - 3
+            y_hi = float((e["ci_high"].fillna(e["eci"])).max()) + 4
+            fig_eci.update_layout(
+                height=320,
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                margin=dict(l=10, r=10, t=10, b=10),
+                font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+                xaxis=dict(showgrid=False, range=[e["release_date"].min() - pd.Timedelta(days=30), e["release_date"].max() + pd.Timedelta(days=75)], automargin=True),
+                yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI", automargin=True, title_standoff=8),
+                showlegend=False
             )
-            dbl_months = None
-            if n_rec >= 2:
-                span_days = (recs["release_date"].iloc[-1] - recs["release_date"].iloc[0]).days
-                growth = recs["value_hours"].iloc[-1] / recs["value_hours"].iloc[0]
-                if span_days > 0 and growth > 1:
-                    dbl_months = span_days / DAYS_PER_MONTH / np.log2(growth)
-                    line += (f", leader doubling ~{dbl_months:.1f} mo." if is_en
-                             else f", подвоєння лідера ~{dbl_months:.1f} міс.")
-            notes.append(line)
+            st.plotly_chart(fig_eci, use_container_width=True, theme=None, config={'displayModeBar': False})
 
-            if sid == primary_sid:
-                primary = {
-                    "name": name, "color": color, "t0": last["release_date"],
-                    "T0": float(last["value_hours"]), "model": short_name(last["model_name"]),
-                    "ci_low": last["ci_low"], "ci_high": last["ci_high"],
-                    "dbl": dbl_months,
-                }
+            leader = recs.iloc[-1]
+            cap = (f"Current record: {leader['label']} (ECI {leader['eci']:.1f}), last measurement {e['release_date'].max():%Y-%m-%d}"
+                   if is_en else
+                   f"Поточний рекорд: {leader['label']} (ECI {leader['eci']:.1f}), останній вимір {e['release_date'].max():%Y-%m-%d}")
+            st.caption(cap)
 
-        # ---- проєкція напрямку до еталона (ілюстративна екстраполяція) ----
-        x_end = x_max + pd.Timedelta(days=200)
-        proj_caption = None
-        T_cross = hours_at_sai_t(100.0)              # горизонт, де SAI_T = 100%
-        if show_proj and primary and primary["T0"] < T_cross:
-            T0, t0, color = primary["T0"], primary["t0"], primary["color"]
-            d_c = primary["dbl"] if primary["dbl"] else float(np.sqrt(DOUBLING_RANGE_MONTHS[0] * DOUBLING_RANGE_MONTHS[1]))
-            d_f = min(DOUBLING_RANGE_MONTHS[0], d_c)
-            d_s = max(DOUBLING_RANGE_MONTHS[1], d_c)
-            n_dbl = float(np.log2(T_cross / T0))
-            m_end = min(n_dbl * d_s, PROJECTION_MAX_YEARS * 12.0)
-            months = np.linspace(0.0, m_end, 80)
-            dates = [t0 + pd.Timedelta(days=float(m) * DAYS_PER_MONTH) for m in months]
-
-            # смуга невизначеності між швидким і повільним подвоєнням
-            fig_tl.add_trace(go.Scatter(
-                x=dates, y=project_sai(T0, d_s, months),
-                mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False
-            ))
-            fig_tl.add_trace(go.Scatter(
-                x=dates, y=project_sai(T0, d_f, months),
-                mode="lines", line=dict(width=0),
-                fill="tonexty", fillcolor=hex_to_rgba(color, 0.12),
-                hoverinfo="skip", showlegend=False
-            ))
-            m_c = n_dbl * d_c
-            months_c = np.append(months[months < m_c], m_c) if m_c <= m_end else months
-            dates_c = [t0 + pd.Timedelta(days=float(m) * DAYS_PER_MONTH) for m in months_c]
-            fig_tl.add_trace(go.Scatter(
-                x=dates_c, y=project_sai(T0, d_c, months_c),
-                mode="lines", line=dict(color=color, width=2, dash="dot"),
-                name="Projection (illustrative)" if is_en else "Проєкція (ілюстративна)",
-                hoverinfo="skip"
-            ))
-
-            def cross_date(dm):
-                return t0 + pd.Timedelta(days=n_dbl * dm * DAYS_PER_MONTH)
-
-            c_central = cross_date(d_c)
-            if n_dbl * d_c <= m_end:
-                fig_tl.add_trace(go.Scatter(
-                    x=[c_central], y=[100.0],
-                    mode="markers+text",
-                    marker=dict(size=11, color=color, symbol="diamond"),
-                    text=[f"≈ {c_central:%Y-%m}"], textposition="bottom left",
-                    textfont=dict(size=10, color="#0f172a"),
-                    hoverinfo="skip", showlegend=False
-                ))
-            x_end = dates[-1] + pd.Timedelta(days=60)
-
-            if is_en:
-                proj_caption = (
-                    f"Distance to the reference from the latest record ({primary['model']}): ≈ {n_dbl:.1f} doublings. "
-                    f"At a doubling time of {d_c:.1f} months this is ≈ {c_central:%Y-%m} "
-                    f"(band for {d_f:.1f}–{d_s:.1f} months: {cross_date(d_f):%Y-%m} … {cross_date(d_s):%Y-%m})."
-                )
-            else:
-                proj_caption = (
-                    f"Відстань до еталона від останнього рекорду ({primary['model']}): ≈ {n_dbl:.1f} подвоєнь. "
-                    f"При подвоєнні кожні {d_c:.1f} міс. це ≈ {c_central:%Y-%m} "
-                    f"(смуга для {d_f:.1f}–{d_s:.1f} міс.: {cross_date(d_f):%Y-%m} … {cross_date(d_s):%Y-%m})."
-                )
-
-        # критична точка: еталон 1 людино-рік (100%)
-        fig_tl.add_trace(go.Scatter(
-            x=[x_min, x_end], y=[100.0, 100.0],
-            mode="lines+text",
-            line=dict(color="#b91c1c", width=1.5),
-            text=["Reference: 1 human-year (2 080 h)" if is_en else "Еталон: 1 людино-рік (2 080 год)", ""],
-            textposition="bottom right",
-            textfont=dict(size=9, color="#b91c1c"),
-            hoverinfo="skip", showlegend=False
-        ))
-
-        # стеля вимірювань METR (16 год) у шкалі SAI_T
-        if show_ceiling:
-            fig_tl.add_trace(go.Scatter(
-                x=[x_min, x_max], y=[float(sai_t(INSTRUMENT_CEILING_H))] * 2,
-                mode="lines+text",
-                line=dict(color="#dc2626", width=1, dash="dash"),
-                text=["METR ceiling 16h" if is_en else "Стеля METR 16 год", ""],
-                textposition="top right",
-                textfont=dict(size=9, color="#dc2626"),
-                hoverinfo="skip", showlegend=False
-            ))
-
-        # права вісь: ті самі позиції в годинах
-        hour_ticks = [0.1, 1, 4, 16, 64, 260, 1040, REFERENCE_H]
-        hour_text = [f"{h:g} h" if is_en else f"{h:g} год" for h in hour_ticks[:-1]] + \
-                    ["2080 h" if is_en else "2080 год"]
-        fig_tl.add_trace(go.Scatter(
-            x=[x_min], y=[0], yaxis="y2", mode="markers",
-            marker=dict(opacity=0, size=1), hoverinfo="skip", showlegend=False
-        ))
-
-        pct_ticks = [0, 20, 40, 60, 80, 100]
-        fig_tl.update_layout(
-            height=400,
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            margin=dict(l=10, r=10, t=10, b=10),
-            font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False, range=[x_min - pd.Timedelta(days=45), x_end], automargin=True),
-            yaxis=dict(
-                range=[0, 110], tickvals=pct_ticks, ticktext=[f"{p}%" for p in pct_ticks],
-                showgrid=True, gridcolor="#f1f5f9", automargin=True, title_standoff=8,
-                title="SAI_T, % of reference" if is_en else "SAI_T, % від еталона"
-            ),
-            yaxis2=dict(
-                overlaying="y", side="right", range=[0, 110],
-                tickvals=[float(sai_t(h)) for h in hour_ticks], ticktext=hour_text,
-                showgrid=False, tickfont=dict(size=9, color="#64748b"), automargin=True
-            ),
-            legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
-            showlegend=True
-        )
-        st.plotly_chart(fig_tl, use_container_width=True, theme=None, config={'displayModeBar': False})
-
-        if primary:
-            cur = float(sai_t(primary["T0"]))
-            cur_txt = f"{cur:.0f}%"
-            if pd.notna(primary["ci_low"]) and pd.notna(primary["ci_high"]) and primary["ci_low"] > 0:
-                cur_txt += f" ({float(sai_t(primary['ci_low'])):.0f}–{float(sai_t(primary['ci_high'])):.0f}%)"
-            st.caption(
-                f"**Current SAI_T of the leader ({primary['model']}):** {cur_txt}, horizon {fmt_hours(primary['T0'])} h."
-                if is_en else
-                f"**Поточний SAI_T лідера ({primary['model']}):** {cur_txt}, горизонт {fmt_hours(primary['T0'])} год."
-            )
-            if primary["name"] == series_label("METR|T50") and beyond_ceiling(primary["T0"]):
+            # чесна примітка: лідери з перекриттям довірчих інтервалів не розрізняються статистично
+            top2 = e.sort_values("eci", ascending=False).head(2)
+            if len(top2) == 2 and pd.notna(top2.iloc[1]["ci_high"]) and pd.notna(top2.iloc[0]["ci_low"]) \
+                    and top2.iloc[1]["ci_high"] >= top2.iloc[0]["ci_low"]:
                 st.caption(
-                    "○ Empty circle = estimate: the value is above the longest METR tasks (16 h), "
-                    "where the instrument no longer measures reliably."
+                    "The top models' confidence intervals overlap: the leader cannot be ranked reliably."
                     if is_en else
-                    "○ Порожній кружечок = оцінка: значення вище за найдовші задачі METR (16 год), "
-                    "де інструмент уже не вимірює надійно."
+                    "Довірчі інтервали провідних моделей перекриваються: лідера не можна впевнено визначити."
                 )
-        for n in notes:
-            st.caption(n)
-        if proj_caption:
-            st.caption(proj_caption)
             st.caption(
-                "Illustrative extrapolation, not a forecast: it assumes exponential growth to continue. "
-                "The reference is a scale of task length, not the moment of loss of control."
+                "ECI is a composite index in points (not hours); source: Epoch AI, CC BY 4.0."
                 if is_en else
-                "Ілюстративна екстраполяція, а не прогноз: вона припускає, що експоненційне зростання триватиме. "
-                "Еталон це шкала довжини завдання, а не момент втрати контролю."
+                "ECI це складений індекс у пунктах (не години); джерело: Epoch AI, CC BY 4.0."
             )
-        st.caption(
-            "Series come from different benchmarks and are not directly comparable."
-            if is_en else
-            "Ряди походять з різних бенчмарків і не є прямо порівнюваними."
-        )
-
-# ==========================================
-# ЗАГАЛЬНА ЗДАТНІСТЬ МОДЕЛІ-ЛІДЕРА (EPOCH CAPABILITIES INDEX)
-# ==========================================
-ECI_COLOR = "#0d9488"
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown(f"<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:8px;'>{L['capability_title']}</div>", unsafe_allow_html=True)
-
-if df_eci.empty or not {"model_name", "release_date", "eci"}.issubset(df_eci.columns):
-    st.info("Data synchronization in progress." if is_en else "Триває збір даних індексу здатності.")
-    if eci_error:
-        st.caption(f"⚠️ fct_capability_index: {eci_error}")
-else:
-    e = df_eci.copy()
-    e["release_date"] = pd.to_datetime(e["release_date"], errors="coerce", utc=True).dt.tz_localize(None)
-    for col in ("eci", "ci_low", "ci_high"):
-        e[col] = pd.to_numeric(e[col], errors="coerce") if col in e.columns else np.nan
-    e["label"] = e["display_name"].fillna(e["model_name"]) if "display_name" in e.columns else e["model_name"]
-    e = e.dropna(subset=["release_date", "eci"])
-    if not show_full:
-        e = e[e["release_date"] >= HISTORY_START]
-
-    if e.empty:
-        st.caption("No data for the selected period." if is_en else "Немає даних за обраний період.")
-    else:
-        e = e.sort_values("release_date").reset_index(drop=True)
-        e["frontier"] = e["eci"].cummax()
-        e["is_record"] = e["eci"] >= e["frontier"]
-        recs = e[e["is_record"]].reset_index(drop=True)
-        others = e[~e["is_record"]]
-
-        fig_eci = go.Figure()
-        if not others.empty:
-            fig_eci.add_trace(go.Scatter(
-                x=others["release_date"], y=others["eci"],
-                mode="markers",
-                marker=dict(size=6, color=ECI_COLOR, opacity=0.25),
-                text=others["label"],
-                hovertemplate="%{text}<br>ECI %{y:.1f}<extra></extra>",
-                showlegend=False
-            ))
-
-        fig_eci.add_trace(go.Scatter(
-            x=e["release_date"], y=e["frontier"],
-            mode="lines",
-            line=dict(color=ECI_COLOR, width=2, shape="hv"),
-            hoverinfo="skip",
-            showlegend=False
-        ))
-
-        n_rec = len(recs)
-        label_from = max(0, n_rec - 4)
-        rec_text = [str(n) if i >= label_from else "" for i, n in enumerate(recs["label"])]
-        rec_pos = ["bottom right" if (n_rec - 1 - i) % 2 == 0 else "top left" for i in range(n_rec)]
-        err_up = (recs["ci_high"] - recs["eci"]).fillna(0).clip(lower=0)
-        err_dn = (recs["eci"] - recs["ci_low"]).fillna(0).clip(lower=0)
-        fig_eci.add_trace(go.Scatter(
-            x=recs["release_date"], y=recs["eci"],
-            mode="markers+text",
-            marker=dict(size=9, color=ECI_COLOR),
-            error_y=dict(type="data", symmetric=False, array=err_up, arrayminus=err_dn,
-                         color=ECI_COLOR, thickness=1, width=3),
-            text=rec_text,
-            textposition=rec_pos,
-            textfont=dict(size=9, color="#0f172a"),
-            hovertext=recs["label"],
-            hovertemplate="%{hovertext}<br>ECI %{y:.1f}<extra></extra>",
-            showlegend=False
-        ))
-
-        y_lo = float((e["ci_low"].fillna(e["eci"])).min()) - 3
-        y_hi = float((e["ci_high"].fillna(e["eci"])).max()) + 4
-        fig_eci.update_layout(
-            height=320,
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            margin=dict(l=10, r=10, t=10, b=10),
-            font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-            xaxis=dict(showgrid=False, range=[e["release_date"].min() - pd.Timedelta(days=30), e["release_date"].max() + pd.Timedelta(days=75)], automargin=True),
-            yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI", automargin=True, title_standoff=8),
-            showlegend=False
-        )
-        st.plotly_chart(fig_eci, use_container_width=True, theme=None, config={'displayModeBar': False})
-
-        leader = recs.iloc[-1]
-        cap = (f"Current record: {leader['label']} (ECI {leader['eci']:.1f}), last measurement {e['release_date'].max():%Y-%m-%d}"
-               if is_en else
-               f"Поточний рекорд: {leader['label']} (ECI {leader['eci']:.1f}), останній вимір {e['release_date'].max():%Y-%m-%d}")
-        st.caption(cap)
-
-        # чесна примітка: лідери з перекриттям довірчих інтервалів не розрізняються статистично
-        top2 = e.sort_values("eci", ascending=False).head(2)
-        if len(top2) == 2 and pd.notna(top2.iloc[1]["ci_high"]) and pd.notna(top2.iloc[0]["ci_low"]) \
-                and top2.iloc[1]["ci_high"] >= top2.iloc[0]["ci_low"]:
-            st.caption(
-                "The top models' confidence intervals overlap: the leader cannot be ranked reliably."
-                if is_en else
-                "Довірчі інтервали провідних моделей перекриваються: лідера не можна впевнено визначити."
-            )
-        st.caption(
-            "ECI is a composite index in points (not hours); source: Epoch AI, CC BY 4.0."
-            if is_en else
-            "ECI це складений індекс у пунктах (не години); джерело: Epoch AI, CC BY 4.0."
-        )
 
 # ==========================================
 # КОЛО ДІЙ МОДЕЛЕЙ-ЛІДЕРІВ: У МЕЖАХ / ПОЗА МЕЖАМИ
