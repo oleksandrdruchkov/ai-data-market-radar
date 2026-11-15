@@ -165,3 +165,21 @@ def test_custom_report():
     rows = ac.custom_report(date(2026, 10, 1), ["self-preservation", "shutdown resistance"],
                             count=lambda q: 4, out=lambda s: None)
     assert [r[0] for r in rows] == ["УСІ ФРАЗИ", "self-preservation", "shutdown resistance"]
+
+
+def test_stop_signal_threshold():
+    assert ac.stop_signal([], 3) == (False, 10)                         # мало статей - тиша
+    assert ac.stop_signal([2, 3, 4], 12)[0] is True                     # 12 >= max(10, 3*3)
+    assert ac.stop_signal([8] * 12, 12)[0] is False                     # поріг 24
+    assert ac.stop_signal([8] * 12, 24)[0] is True
+
+
+def test_stop_alert_only_for_last_complete_month():
+    def answers(q):
+        if "abs:" not in q:
+            return 100
+        jump = "shutdown resistance" in q and "20230201" in q            # стрибок лише в лютому
+        return 15 if jump else 1
+    c = make([], answers, today=date(2023, 3, 14))
+    c.fetch_series()
+    assert len(c.pending_alerts) == 1 and "2023-02" in c.pending_alerts[0]["message"]

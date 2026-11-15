@@ -10,7 +10,7 @@ on:
         description: 'Напрям (усі разом - ~115 запитів, arXiv може обмежити)'
         type: choice
         default: stems
-        options: [stems, groups, agents, self_improvement, robots, reasoning, ai_science, oversight, understanding, robustness, undesired, risk, all]
+        options: [stems, groups, agents, self_improvement, robots, reasoning, ai_science, oversight, understanding, robustness, undesired, risk, stop_resistance, all]
       phrases:
         description: 'Довільні фрази через «;» (якщо заповнено - перевіряються вони, а не напрям)'
         type: string
