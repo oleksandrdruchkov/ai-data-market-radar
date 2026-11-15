@@ -1,4 +1,8 @@
-# Перехід на спільний каркас збирачів
+# Каркас збирачів і міграції бази
+
+Перелік міграцій нижче доповнено до 026 (2026-11-15). Решта - нотатки переходу на спільний каркас.
+
+## Перехід на спільний каркас збирачів
 
 ## Що змінилось
 
@@ -16,6 +20,22 @@ sql/007_leader_by_eci.sql               лідер лабораторії = на
 sql/008_cards_reprocess.sql             повторна обробка карток після зміни збирача
 sql/009_cards_queue_and_keys.sql        черга посилань між картками; одна модель = один запис (model_key)
 sql/010_units_free.sql                  одиниця виміру в записах кола - будь-яка (task, session ...)
+sql/011_bubble_metrics.sql              показники індексу крихкості бульбашки ШІ
+sql/012_baa10y.sql                      кредитний спред Moody's Baa
+sql/013_real_use_only_and_review.sql    на коло - лише реальне використання; рішення людини на сторінці перевірки
+sql/014_bubble_scores.sql               бали складників індексу бульбашки
+sql/015_market_signals.sql              ринкові сигнали SEC (див. docs/market_signals.md)
+sql/016_sec_external_id.sql             ключ подань SEC
+sql/017_funding_ladder.sql              драбина фінансування
+sql/018_funding_ladder_fix.sql          виправлення драбини фінансування
+sql/019_indeed_ai_tracker.sql           Indeed AI Tracker (частка вакансій зі згадкою ШІ)
+sql/020_arxiv_counts.sql                лічильники arXiv за фразами (без моделі)
+sql/021_phrase_candidates.sql           кандидати фраз для перевірки людиною
+sql/022_arxiv_self_improvement.sql      напрям «адаптивність після розгортання»
+sql/023_deepseek_mokahr.sql             вакансії DeepSeek через MokaHR
+sql/024_arxiv_autonomy_oversight.sql    групи «зростання автономності» / «людський нагляд»
+sql/025_arxiv_stop_resistance.sql       напрям «опір зупинці та втручанню людини»
+sql/026_circle_units_aliases.sql        коло: без тестів-провокацій, синоніми моделей, окремо за одиницями
 collectors/system_cards.py              збирач карток Anthropic / OpenAI
 collectors/_card_verify.py              механічна перевірка (цитати, числа, друга модель) - без моделі
 metrics/autonomy.py                     розрахунок показників у fct_metric_values
