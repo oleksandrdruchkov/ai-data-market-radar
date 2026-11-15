@@ -31,7 +31,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from core import BaseCollector, RawItem, Skip
 from core.db import iso, utcnow
-from collectors._card_verify import check_record, counts_as_out, match_second_opinion, severity_of
+from collectors._card_verify import (check_record, counts_as_out, match_second_opinion, provocation_signs,
+                                    severity_of)
 from core.review import REAL_METHOD
 
 HEADERS = {"User-Agent": "MarketRadarBot/2.0 (+https://github.com/oleksandrdruchkov/ai-data-market-radar)"}
@@ -438,8 +439,11 @@ class SystemCards(BaseCollector):
             log.append(why)
             if rate is None:
                 rate = 0.0                                         # рядок лишиться непідтвердженим
-            auto = ok and agree
             acts = [it for it in r["items"] if counts_as_out(it, min_sev)]
+            signs = provocation_signs(acts)
+            if signs:
+                log.append("ознаки тесту-провокації: " + ", ".join(signs) + " - потрібна перевірка людиною")
+            auto = ok and agree and not signs
             rows.append({
                 "lab": d["lab"], "model_name": r["model_name"],
                 "release_date": doc_date or date.today().isoformat(),

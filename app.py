@@ -981,22 +981,48 @@ if lead_error:
 elif df_lead_team.empty:
     st.info("No verified data yet." if is_en else "Підтверджених даних ще немає.")
 else:
+    UNITS_EN = {"use": "uses", "turn": "turns", "tool_call": "tool calls", "trajectory": "trajectories",
+                "session": "sessions", "transcript": "transcripts", "task": "tasks", "conversation": "conversations",
+                "run": "runs"}
+    UNITS_UA = {"use": "використань", "turn": "кроків", "tool_call": "викликів інструментів",
+                "trajectory": "траєкторій", "session": "сесій", "transcript": "записів роботи",
+                "task": "завдань", "conversation": "розмов", "run": "запусків"}
+
+    def _unit(u):
+        return (UNITS_EN if is_en else UNITS_UA).get(u, u)
+
+    # Частоти з різними одиницями рахунку не усереднюються (sql/026): головне коло - одиниця,
+    # за якою є найбільше лідерів; решта одиниць - окремими рядками в підказці.
     team = df_lead_team.iloc[0]
+    main_unit = team.get("unit")
     out_share = float(team["out_share"])
+    models_main = (df_lead_models[df_lead_models["unit"] == main_unit]
+                   if "unit" in df_lead_models.columns else df_lead_models)
 
     # --- спливаюче вікно «поза межами»: з чого складається сегмент
     out_lines = [
-        (f"<b>Beyond bounds: {_pct(out_share)}</b> (mean of {int(team['n_models'])} leading models, equal weight)"
+        (f"<b>Beyond bounds: {_pct(out_share)}</b> of {_unit(main_unit)} "
+         f"(mean of {int(team['n_models'])} leading model(s), equal weight)"
          if is_en else
-         f"<b>Поза межами: {_pct(out_share)}</b> (середнє {int(team['n_models'])} моделей-лідерів, рівна вага)"),
+         f"<b>Поза межами: {_pct(out_share)}</b> {_unit(main_unit)} "
+         f"(середнє {int(team['n_models'])} моделей-лідерів, рівна вага)"),
         (f"range across models: {_pct(team['out_min'])} … {_pct(team['out_max'])}" if is_en
          else f"розкид між моделями: {_pct(team['out_min'])} … {_pct(team['out_max'])}"),
         "",
     ]
-    for _, m in df_lead_models.iterrows():
+    for _, t in df_lead_team.iloc[1:].iterrows():
+        out_lines.append(
+            (f"<i>other unit, not averaged in: {_unit(t['unit'])} - {t['team']}: {_pct(t['out_share'])}</i>" if is_en
+             else f"<i>інша одиниця рахунку, не усереднюється: {_unit(t['unit'])} - {t['team']}: {_pct(t['out_share'])}</i>"))
+    if len(df_lead_team) > 1:
+        out_lines.append("")
+    for _, m in models_main.iterrows():
         ci = (f" [{_pct(m['ci_low'])}–{_pct(m['ci_high'])}]"
               if pd.notna(m.get("ci_low")) and pd.notna(m.get("ci_high")) else "")
         out_lines.append(f"<b>{m['lab']} · {m['model_name']}</b>: {_pct(m['rate_out'])}{ci}")
+        if m.get("reported_as"):
+            out_lines.append("&nbsp;&nbsp;<i>" + (f"data published as {m['reported_as']} (the same model)" if is_en
+                             else f"дані опубліковано як {m['reported_as']} (та сама модель)") + "</i>")
         # чому саме ця модель представляє лабораторію (вибір зроблено в SQL, тут лише показ)
         if m.get("leader_basis") == "eci" and pd.notna(m.get("eci")):
             basis = (f"leader by Epoch Capabilities Index: {float(m['eci']):.1f}" if is_en
@@ -1013,12 +1039,7 @@ else:
                 f"найсильніша модель лабораторії за ECI: {m['lab_top_model']} ({float(top_eci):.1f}) - підтверджених даних ще немає")
                 + "</i>")
         for src in (m["sources"] or []):
-            units_en = {"use": "uses", "turn": "turns", "tool_call": "tool calls", "trajectory": "trajectories",
-                        "session": "sessions", "transcript": "transcripts", "task": "tasks", "conversation": "conversations"}
-            units_ua = {"use": "використань", "turn": "кроків", "tool_call": "викликів інструментів",
-                        "trajectory": "траєкторій", "session": "сесій", "transcript": "записів роботи",
-                        "task": "завдань", "conversation": "розмов"}
-            cnt = (f"{src['n_out']} / {src['n_total']} " + ((units_en if is_en else units_ua).get(src["unit"], src["unit"]))
+            cnt = (f"{src['n_out']} / {src['n_total']} " + _unit(src["unit"])
                    if src.get("n_total") else ("number of actions not published" if is_en else "кількість дій не опублікована"))
             where = f"{src.get('section') or ''}" + ((f", p. {src['page']}" if is_en else f", стор. {src['page']}")
                                                        if src.get("page") else "")
