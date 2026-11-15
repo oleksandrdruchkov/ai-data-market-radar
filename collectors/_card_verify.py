@@ -91,6 +91,21 @@ def counts_as_out(item: dict, min_severity: int) -> bool:
     return bool(item.get("is_action")) and (sev is None or sev >= min_severity)
 
 
+# Ознаки тесту-провокації в цитатах: такі запис не підтверджується автоматично,
+# а йде на перевірку людиною (на коло - лише реальна робота моделі).
+PROVOCATION_MARKERS = ("without safeguards", "simulated", "simulation", "evaluation", "honeypot",
+                       "red-team", "red team", "constructed", "trap", "security exercise", "synthetic")
+
+
+def provocation_signs(items: list[dict]) -> list[str]:
+    """Які ознаки тесту-провокації знайдено в цитатах і назвах категорій."""
+    found = []
+    for it in items:
+        text = normalize(f"{it.get('category') or ''} {it.get('quote') or ''}").lower()
+        found += [m for m in PROVOCATION_MARKERS if m in text and m not in found]
+    return found
+
+
 def check_record(rec: dict, pages: dict[str, str],
                  min_severity: int = 3) -> tuple[bool, list[str], float | None, int | None]:
     """Повертає (пройдено, журнал, частка, n_out). rec - запис у форматі схеми CardRecord (dict).

@@ -418,3 +418,14 @@ def test_second_opinion_falls_through_and_stale_rows_removed(db, monkeypatch):
     rows = db.select("fct_leader_action_rates", eq={"source_url": url})
     assert [r["model_name"] for r in rows] == ["Claude Mythos 5.1"]
     assert rows[0]["verified"] is True and "m3" in rows[0]["extraction_method"]
+
+
+def test_provocation_signs_block_auto_verification():
+    from collectors._card_verify import provocation_signs
+    opus = [{"category": "attempted to escape or tamper with a sandbox",
+             "quote": "In two new evaluations run without safeguards, Claude Opus 5.5 attempted to escape "
+                      "or tamper with a sandbox in 1.5% of runs"}]
+    assert provocation_signs(opus) == ["without safeguards", "evaluation"]
+    real = [{"category": "Rare instances of the model attempting to work around security hooks.",
+             "quote": "We saw this in less than 0.01% of completions, according to our automated offline pipeline."}]
+    assert provocation_signs(real) == []
