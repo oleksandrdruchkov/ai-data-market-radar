@@ -1288,13 +1288,15 @@ else:
                 fig_j.add_trace(go.Scatter(x=pd.to_datetime(d["period_start"]), y=d["value"].astype(float),
                                            mode="lines", name=name_en if is_en else name_ua, line=dict(color=col, width=1.6)))
         fig_j.add_hline(y=100, line_dash="dot", line_color="#64748b", line_width=1)
-        fig_j.update_layout(height=240, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-                            margin=dict(l=10, r=10, t=10, b=10),
-                            legend=dict(orientation="h", y=1.08, x=0, font=dict(size=9)),
+        fig_j.update_layout(height=260, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+                            margin=dict(l=40, r=8, t=28, b=30),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0, font=dict(size=9)),
                             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-                            yaxis=dict(title=("Indeed, Feb 2020 = 100" if is_en else "Indeed, лютий 2020 = 100"),
-                                       gridcolor="#f1f5f9"))
+                            yaxis=dict(gridcolor="#f1f5f9", automargin=False),
+                            xaxis=dict(gridcolor="#f1f5f9", dtick="M24", tickformat="%Y", automargin=False))
         show_chart(fig_j)
+        st.caption("Indeed job postings index, Feb 2020 = 100 (dotted line)." if is_en
+                   else "Індекс вакансій Indeed, лютий 2020 = 100 (пунктир).")
     with j2:
         st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#64748b;'>"
                     + ("ML share of developer postings (Adzuna)" if is_en else "Частка ML серед вакансій розробників (Adzuna)")
