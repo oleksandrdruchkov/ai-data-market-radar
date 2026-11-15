@@ -170,9 +170,9 @@ def render_growth(sb, is_en: bool) -> None:
                              (own_debt, C_DEBT, _t(is_en, "debt", "борг")),
                              (mult, C_EQUITY, _t(is_en, "share sales", "продаж акцій"))):
             fig.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(width=0), fill="tonexty", fillcolor=col,
-                                     opacity=0.85, name=name, hoverinfo="skip"))
+                                     opacity=0.85, name=name, hoverinfo="skip", showlegend=False))
         fig.add_trace(go.Scatter(x=x, y=mult, mode="lines+markers", line=dict(color=C_MONEY, width=2),
-                                 marker=dict(size=5), name=_t(is_en, "Money (capex)", "Гроші (капвитрати)"),
+                                 marker=dict(size=5), name=_t(is_en, "Money", "Гроші"),
                                  text=txt, hovertemplate="%{text}<br>×%{y:.1f}<extra></extra>"))
     # --- фахівці ШІ
     if BASE_MONTH in ai.index:
@@ -189,7 +189,7 @@ def render_growth(sb, is_en: bool) -> None:
         meas = aut["measured"]
         fig.add_trace(go.Scatter(
             x=meas.index, y=meas / b0, mode="lines+markers", line=dict(color=C_AUTONOMY, width=3), marker=dict(size=5),
-            name=_t(is_en, "Leader autonomy (measured)", "Автономність лідера (виміряно)"),
+            name=_t(is_en, "Autonomy", "Автономність"),
             text=[f"{h:.1f}" for h in meas],
             hovertemplate=_t(is_en, "%{x|%b %Y}: %{text} h task (METR T50)<br>×%{y:.0f}<extra></extra>",
                              "%{x|%m.%Y}: завдання на %{text} год (METR T50)<br>×%{y:.0f}<extra></extra>")))
@@ -198,23 +198,34 @@ def render_growth(sb, is_en: bool) -> None:
             mid = [meas.iloc[-1] / b0] + [aut["estimate"][m][0] / b0 for m in ex_[1:]]
             lo = [meas.iloc[-1] / b0] + [aut["estimate"][m][1] / b0 for m in ex_[1:]]
             hi = [meas.iloc[-1] / b0] + [aut["estimate"][m][2] / b0 for m in ex_[1:]]
-            fig.add_trace(go.Scatter(x=ex_ + ex_[::-1], y=hi + lo[::-1], fill="toself", fillcolor="rgba(127,119,221,0.15)",
-                                     line=dict(width=0), hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scatter(x=ex_ + ex_[::-1], y=hi + lo[::-1], mode="lines", fill="toself",
+                                     fillcolor="rgba(127,119,221,0.15)", line=dict(width=0),
+                                     hoverinfo="skip", showlegend=False))
             fig.add_trace(go.Scatter(
                 x=ex_, y=mid, mode="lines", line=dict(color=C_AUTONOMY, width=3, dash="dash"),
-                name=_t(is_en, "Leader autonomy (estimate from ECI)", "Автономність лідера (оцінка за ECI)"),
+                name=_t(is_en, "estimate", "оцінка"),
                 text=[f"{v * b0:.0f}" for v in mid],
                 hovertemplate=_t(is_en, "%{x|%b %Y}: ≈ %{text} h (estimate)<br>×%{y:.0f}<extra></extra>",
                                  "%{x|%m.%Y}: ≈ %{text} год (оцінка)<br>×%{y:.0f}<extra></extra>")))
-    fig.update_layout(height=420, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
-                      margin=dict(l=10, r=10, t=10, b=10),
+    x_end = pd.Timestamp.today().normalize() + pd.DateOffset(months=1)
+    fig.update_layout(height=400, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
+                      margin=dict(l=44, r=8, t=8, b=8),
                       font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-                      legend=dict(orientation="h", y=-0.12, x=0, font=dict(size=9)),
-                      yaxis=dict(type="log", title=_t(is_en, "times vs Dec 2023", "разів від грудня 2023"),
-                                 gridcolor="#f1f5f9", tickvals=[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+                      legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0, font=dict(size=10),
+                                  itemwidth=30, tracegroupgap=0, bgcolor="rgba(255,255,255,0)"),
+                      yaxis=dict(type="log", gridcolor="#f1f5f9", automargin=False, range=[-0.03, 3.1],
+                                 tickvals=[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
                                  ticktext=["×1", "×2", "×5", "×10", "×20", "×50", "×100", "×200", "×500", "×1000"]),
-                      xaxis=dict(gridcolor="#f8fafc"))
+                      xaxis=dict(gridcolor="#f8fafc", range=[BASE_MONTH - pd.DateOffset(days=20), x_end],
+                                 dtick="M12", tickformat="%Y"))
     st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
+    sq = "display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px;vertical-align:-1px;"
+    st.markdown("<div style='font-size:0.75rem;color:#475569;margin:-6px 0 8px;'>"
+                + _t(is_en, "Money by source:", "Гроші за джерелами:")
+                + f"<span style='{sq}background:{C_OWN}'></span>" + _t(is_en, "own earnings", "власний заробіток")
+                + f"<span style='{sq}background:{C_DEBT}'></span>" + _t(is_en, "debt", "борг")
+                + f"<span style='{sq}background:{C_EQUITY}'></span>" + _t(is_en, "share sales", "продаж акцій")
+                + "</div>", unsafe_allow_html=True)
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -290,6 +301,8 @@ def render_research(sb, is_en: bool) -> None:
         return
 
     as_share = st.toggle(_t(is_en, "Composition in %", "Склад у %"), value=False, key="research_share")
+    st.caption(_t(is_en, "% of the bar" if as_share else "% of AI papers on ArXiv per quarter",
+                  "% стовпчика" if as_share else "% статей ШІ на ArXiv за квартал"))
     df["q"] = df["period_start"].dt.to_period("Q")
     agg = df.groupby(["q", "metric_id"])[["numerator", "denominator"]].sum()
     agg["pct"] = 100 * agg["numerator"] / agg["denominator"]
@@ -323,14 +336,13 @@ def render_research(sb, is_en: bool) -> None:
                                     "%{customdata[0]:.2f} % статей ШІ · %{customdata[1]:.0f} % стовпчика")
                                + f"<br>{_t(is_en, en, ua)}: %{{customdata[2]:.1f}} %<extra></extra>")))
             base = base + seg
-    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05, height=380,
+    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05, height=360,
                       paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
-                      margin=dict(l=10, r=10, t=10, b=10),
+                      margin=dict(l=40, r=8, t=8, b=8),
                       font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-                      legend=dict(orientation="h", y=-0.18, x=0, font=dict(size=9), groupclick="toggleitem"),
-                      yaxis=dict(title=_t(is_en, "% of the bar" if as_share else "% of AI papers on ArXiv",
-                                          "% стовпчика" if as_share else "% статей ШІ на ArXiv"),
-                                 gridcolor="#f1f5f9"))
+                      legend=dict(orientation="h", yanchor="top", y=-0.12, x=0, font=dict(size=9),
+                                  groupclick="toggleitem", itemwidth=30),
+                      yaxis=dict(gridcolor="#f1f5f9", ticksuffix=" %", automargin=False))
     st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
     st.caption(_t(
         is_en,
