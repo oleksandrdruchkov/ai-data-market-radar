@@ -259,13 +259,30 @@ col_head, col_lang, col_reg = st.columns([1.1, 0.55, 1.1])
 with col_head:
     st.markdown("<div style='font-weight:800; font-size:1.05rem; color:#0f172a; padding-top:4px;'>📡 Market Radar</div>", unsafe_allow_html=True)
 
+def _default_lang() -> str:
+    """Мова за замовчуванням: ?lang=ua|en у посиланні, інакше мова браузера
+    (українська чи російська -> UA), інакше EN - для зовнішніх читачів."""
+    q = str(st.query_params.get("lang", "")).strip().lower()
+    if q in ("ua", "uk"):
+        return "UA"
+    if q == "en":
+        return "EN"
+    try:
+        loc = (getattr(st.context, "locale", None) or "").lower()
+    except Exception:
+        loc = ""
+    return "UA" if loc.startswith(("uk", "ru")) else "EN"
+
+
+LANGS = ["UA", "EN"]
 with col_lang:
     selected_lang = st.selectbox(
         "Language",
-        options=["UA", "EN"],
-        index=0,
+        options=LANGS,
+        index=LANGS.index(_default_lang()),
         label_visibility="collapsed"
     )
+st.query_params["lang"] = selected_lang.lower()     # посилання зберігає обрану мову
 
 is_en = (selected_lang == "EN")
 
