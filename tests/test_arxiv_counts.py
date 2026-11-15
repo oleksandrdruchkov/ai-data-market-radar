@@ -159,3 +159,9 @@ def test_merge_phrases_and_fingerprint():
     assert ac.fingerprint(merged) != ac.fingerprint(ac.DIRECTIONS)
     assert ac.fingerprint(ac.merge_phrases(ac.DIRECTIONS, [])) == ac.fingerprint(ac.DIRECTIONS)
     assert "Agent Economy" not in ac.DIRECTIONS["agents"][2]              # код не змінюється
+
+
+def test_custom_report():
+    rows = ac.custom_report(date(2026, 10, 1), ["self-preservation", "shutdown resistance"],
+                            count=lambda q: 4, out=lambda s: None)
+    assert [r[0] for r in rows] == ["УСІ ФРАЗИ", "self-preservation", "shutdown resistance"]

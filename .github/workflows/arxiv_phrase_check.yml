@@ -11,6 +11,10 @@ on:
         type: choice
         default: stems
         options: [stems, groups, agents, self_improvement, robots, reasoning, ai_science, oversight, understanding, robustness, undesired, risk, all]
+      phrases:
+        description: 'Довільні фрази через «;» (якщо заповнено - перевіряються вони, а не напрям)'
+        type: string
+        default: ''
 
 jobs:
   check:
@@ -30,4 +34,5 @@ jobs:
       - name: Phrase counts
         env:
           PHRASE_CHECK_DIRECTION: ${{ inputs.direction != 'all' && inputs.direction || '' }}
+          PHRASE_CHECK_PHRASES: ${{ inputs.phrases }}
         run: python -m collectors.arxiv_counts --check
