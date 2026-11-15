@@ -1131,14 +1131,12 @@ def _fetch_series(metric_id, region, since=None):
 @st.cache_data(ttl=600)
 def load_bubble():
     try:
-        out = {"fragility": _fetch_series("bubble_fragility", "US"), "parts": {}, "jobs": {}, "adzuna": []}
+        out = {"fragility": _fetch_series("bubble_fragility", "US"), "parts": {}, "adzuna": []}
         for mid in BUBBLE_PARTS:
             last = (supabase.table("fct_metric_values").select("period_start,value").eq("metric_id", mid)
                     .eq("region", "US").order("period_start", desc=True).limit(1).execute().data)
             if last:
                 out["parts"][mid] = last[0]
-        for mid in ("indeed_softdev_postings", "indeed_total_postings"):
-            out["jobs"][mid] = _fetch_series(mid, "US")
         out["adzuna"] = (supabase.table("fct_metric_values").select("region,period_start,value,numerator,denominator")
                          .eq("metric_id", "adzuna_ml_share").order("period_start", desc=True).limit(30).execute().data)
         return out, None
@@ -1274,41 +1272,25 @@ else:
                        else "Найвища сходинка серед лабораторій-лідерів за звітами SEC, відомими на кожну дату. "
                             "Дані всієї компанії, не лише ШІ; пороги v0.")
 
-    # --- Міст до SAI: люди
+    # --- Частка ML серед вакансій розробників по країнах (Adzuna). Динаміку фахівців ШІ
+    # показує головний графік (Indeed AI Tracker, ui_overview.py); тут - лише розріз по країнах.
     st.markdown("<div style='font-weight:700; font-size:0.9rem; color:#0f172a; margin:6px 0;'>"
-                + ("Bridge to SAI: who is being hired" if is_en else "Міст до SAI: кого наймають") + "</div>",
+                + ("ML share of developer postings by country (Adzuna)" if is_en
+                   else "Частка ML серед вакансій розробників по країнах (Adzuna)") + "</div>",
                 unsafe_allow_html=True)
-    j1, j2 = st.columns([3, 1])
-    with j1:
-        fig_j = go.Figure()
-        for mid, name_en, name_ua, col in (("indeed_softdev_postings", "Software developers", "Розробники", "#2563eb"),
-                                           ("indeed_total_postings", "All jobs", "Усі вакансії", "#94a3b8")):
-            d = bubble["jobs"].get(mid)
-            if d is not None and not d.empty:
-                fig_j.add_trace(go.Scatter(x=pd.to_datetime(d["period_start"]), y=d["value"].astype(float),
-                                           mode="lines", name=name_en if is_en else name_ua, line=dict(color=col, width=1.6)))
-        fig_j.add_hline(y=100, line_dash="dot", line_color="#64748b", line_width=1)
-        fig_j.update_layout(height=240, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-                            margin=dict(l=10, r=10, t=10, b=10),
-                            legend=dict(orientation="h", y=1.08, x=0, font=dict(size=9)),
-                            font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-                            yaxis=dict(title=("Indeed, Feb 2020 = 100" if is_en else "Indeed, лютий 2020 = 100"),
-                                       gridcolor="#f1f5f9"))
-        show_chart(fig_j)
-    with j2:
-        st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#64748b;'>"
-                    + ("ML share of developer postings (Adzuna)" if is_en else "Частка ML серед вакансій розробників (Adzuna)")
-                    + "</div>", unsafe_allow_html=True)
-        seen = set()
-        for r in bubble["adzuna"]:
-            if r["region"] in seen:
-                continue
-            seen.add(r["region"])
-            st.markdown(f"<div style='font-size:0.85rem;'><b>{r['region']}</b>: {100 * float(r['value']):.1f}% "
-                        f"<span style='color:#64748b;font-size:0.7rem;'>({r['period_start']})</span></div>",
-                        unsafe_allow_html=True)
-        st.caption("Trend needs a few weeks of daily data." if is_en
-                   else "Тенденція з'явиться через кілька тижнів щоденного збору.")
+    seen, cells = set(), []
+    for r in bubble["adzuna"]:
+        if r["region"] in seen:
+            continue
+        seen.add(r["region"])
+        cells.append(f"<span style='white-space:nowrap;margin-right:14px;'><b>{r['region']}</b> "
+                     f"{100 * float(r['value']):.1f}%</span>")
+    if cells:
+        st.markdown("<div style='font-size:0.9rem;line-height:1.8;'>" + "".join(cells) + "</div>",
+                    unsafe_allow_html=True)
+        st.caption((f"As of {bubble['adzuna'][0]['period_start']}. Trend needs a few weeks of daily data."
+                    if is_en else
+                    f"Станом на {bubble['adzuna'][0]['period_start']}. Тенденція з'явиться через кілька тижнів щоденного збору."))
 
     with st.expander("Methodology: fragility index" if is_en else "Методологія: індекс крихкості"):
         if is_en:
