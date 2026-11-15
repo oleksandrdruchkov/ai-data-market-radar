@@ -41,8 +41,9 @@ C_OWN, C_DEBT, C_EQUITY = "#B4B2A9", "#EF9F27", "#D85A30"
 DIR_COLORS = {
     "agents": "#993C1D", "self_improvement": "#D4537E", "robots": "#EF9F27", "reasoning": "#B4B2A9",
     "ai_science": "#7F77DD",
-    "oversight": "#B5D4F4", "understanding": "#185FA5", "robustness": "#0C447C", "undesired": "#378ADD",
-    "risk": "#85B7EB", "stop_resistance": "#04342C",
+    # нагляд: сині й бірюзові, що різняться світлотою, щоб не зливатися
+    "oversight": "#1D9E75", "understanding": "#185FA5", "robustness": "#0C447C", "undesired": "#85B7EB",
+    "risk": "#B5D4F4", "stop_resistance": "#04342C",
 }
 
 
@@ -347,9 +348,10 @@ def render_research(sb, is_en: bool) -> None:
                                     "%{customdata[0]:.2f} % статей ШІ · %{customdata[1]:.0f} % стовпчика")
                                + f"<br>{_t(is_en, en, ua)}: %{{customdata[2]:.1f}} %<extra></extra>")))
             base = base + seg
-    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05, height=360,
+    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05, height=380,
                       paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
-                      margin=dict(l=40, r=8, t=8, b=8),
+                      margin=dict(l=40, r=8, t=8, b=40),
+                      xaxis=dict(type="category", tickfont=dict(size=10), automargin=False),
                       font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
                       showlegend=False,
                       yaxis=dict(gridcolor="#f1f5f9", ticksuffix=" %", automargin=False))
