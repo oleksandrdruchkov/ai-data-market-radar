@@ -1,5 +1,5 @@
 -- =====================================================================
--- 003_flag_synthetic_benchmarks.sql  (ВАШЕ РІШЕННЯ - див. README_MIGRATION.md)
+-- 003_flag_synthetic_benchmarks.sql  (ВАШЕ РІШЕННЯ - див. docs/MIGRATIONS.md)
 -- fetch_benchmarks.py рахував T50/T80 і c_score за формулою від coding-балу Arena
 -- (T50 = coding/100 * 17.5, T80 = T50 * 0.32), але записував їх як is_synthetic = false
 -- і source_url = metr.org. METR цих значень не вимірював.

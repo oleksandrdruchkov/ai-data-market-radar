@@ -1,3 +1,6 @@
+> **Архів. Ранній варіант, замінено.** Формули цього документа (зважений SAI, Arena Elo, ваги
+> Reasoning / Coding / Defense) радар **не використовує**. Чинна методика - у [README](../../README.md).
+
 # 📄 ANALYTICAL BRIEF: AI AUTONOMY INDEX & "SKYNET THRESHOLD"
 **Документ:** Критичний аналіз методології зведення індексів ШІ  
 **Контекст:** Проєкт *Market & AI Intelligence Radar*  
