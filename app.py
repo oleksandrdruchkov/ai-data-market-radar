@@ -184,6 +184,7 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 import ui_overview
+from ui_overview import show_chart
 
 # Сторінка перевірки записів кола лідерів (вхід за паролем): ?review=1
 # Відкривається тут же, щоб не залежати від того, чи Streamlit підхопив pages/review.py.
@@ -372,7 +373,8 @@ def apply_clean_layout(fig, height=250):
         plot_bgcolor="#ffffff",
         font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
         margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(showgrid=True, gridcolor="#f1f5f9", tickfont=dict(color="#475569", size=9), dtick=1, automargin=True),
+        xaxis=dict(showgrid=True, gridcolor="#f1f5f9", tickfont=dict(color="#475569", size=9), nticks=5,
+                   automargin=True, title=None),
         yaxis=dict(showgrid=False, tickfont=dict(color="#0f172a", size=10), automargin=True),
         showlegend=False
     )
@@ -420,7 +422,7 @@ if selected_view == L["tab_demand"]:
             insidetextfont=dict(color="#ffffff", size=10),
             width=0.42
         )
-        st.plotly_chart(fig_skills, use_container_width=True, theme=None, config={'responsive': True, 'displayModeBar': False})
+        show_chart(fig_skills)
     else:
         st.caption(f"{L['empty_skills']} {reg_lookup}.")
 
@@ -810,7 +812,7 @@ with st.expander("Detailed series: autonomy horizon and capability index (ECI)" 
                 legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, font=dict(size=9)),
                 showlegend=True
             )
-            st.plotly_chart(fig_tl, use_container_width=True, theme=None, config={'displayModeBar': False})
+            show_chart(fig_tl)
 
             if primary:
                 cur = float(sai_t(primary["T0"]))
@@ -929,7 +931,7 @@ with st.expander("Detailed series: autonomy horizon and capability index (ECI)" 
                 yaxis=dict(range=[y_lo, y_hi], showgrid=True, gridcolor="#f1f5f9", title="ECI", automargin=True, title_standoff=8),
                 showlegend=False
             )
-            st.plotly_chart(fig_eci, use_container_width=True, theme=None, config={'displayModeBar': False})
+            show_chart(fig_eci)
 
             leader = recs.iloc[-1]
             cap = (f"Current record: {leader['label']} (ECI {leader['eci']:.1f}), last measurement {e['release_date'].max():%Y-%m-%d}"
@@ -1070,7 +1072,7 @@ else:
         font=dict(color="#0f172a", size=10, family="-apple-system, BlinkMacSystemFont, Segoe UI"),
         hoverlabel=dict(bgcolor="#ffffff", font_size=11, align="left"),
     )
-    st.plotly_chart(fig_circ, use_container_width=True, theme=None, config={'displayModeBar': False})
+    show_chart(fig_circ)
 
     st.caption(
         (f"**Team:** {team['team']}. Real-use data published by the developers; trap tests are not used. "
@@ -1209,7 +1211,7 @@ else:
                             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
                             yaxis=dict(range=[0, 100], gridcolor="#f1f5f9", tickvals=[0, 20, 40, 60, 70, 80, 100]),
                             xaxis=dict(gridcolor="#f1f5f9"))
-        st.plotly_chart(fig_b, use_container_width=True, theme=None, config={'displayModeBar': False})
+        show_chart(fig_b)
 
     # --- Драбина фінансування перегонів (metrics/funding_ladder.py, дані SEC)
     LADDER = [("own funds", "власні кошти"), ("drawing reserves", "проїдають запаси"), ("debt", "борг"),
@@ -1266,7 +1268,7 @@ else:
                                            ticktext=[f"{i} · {LADDER[i][0] if is_en else LADDER[i][1]}" for i in range(5)],
                                            gridcolor="#f1f5f9"),
                                 xaxis=dict(gridcolor="#f1f5f9"))
-            st.plotly_chart(fig_l, use_container_width=True, theme=None, config={'displayModeBar': False})
+            show_chart(fig_l)
             st.caption("Highest rung among leading labs, from SEC filings known at each date. "
                        "Company data, not AI-only; v0 thresholds." if is_en
                        else "Найвища сходинка серед лабораторій-лідерів за звітами SEC, відомими на кожну дату. "
@@ -1292,7 +1294,7 @@ else:
                             font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
                             yaxis=dict(title=("Indeed, Feb 2020 = 100" if is_en else "Indeed, лютий 2020 = 100"),
                                        gridcolor="#f1f5f9"))
-        st.plotly_chart(fig_j, use_container_width=True, theme=None, config={'displayModeBar': False})
+        show_chart(fig_j)
     with j2:
         st.markdown("<div style='font-size:0.75rem;font-weight:700;color:#64748b;'>"
                     + ("ML share of developer postings (Adzuna)" if is_en else "Частка ML серед вакансій розробників (Adzuna)")

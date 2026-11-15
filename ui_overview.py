@@ -50,6 +50,17 @@ def _t(is_en: bool, en: str, ua: str) -> str:
     return en if is_en else ua
 
 
+def show_chart(fig, **kwargs) -> None:
+    """Графік без наближення пальцем: на телефоні провід по графіку інакше масштабує його."""
+    fig.update_layout(dragmode=False)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    config = {"displayModeBar": False, "scrollZoom": False, **kwargs.pop("config", {})}
+    kwargs.setdefault("use_container_width", True)
+    kwargs.setdefault("theme", None)
+    st.plotly_chart(fig, config=config, **kwargs)
+
+
 def _fetch(sb, metric_id: str, region: str | None = "GLOBAL", cols: str = "period_start,value") -> pd.DataFrame:
     rows, off = [], 0
     while True:
@@ -218,7 +229,7 @@ def render_growth(sb, is_en: bool) -> None:
                                  ticktext=["×1", "×2", "×5", "×10", "×20", "×50", "×100", "×200", "×500", "×1000"]),
                       xaxis=dict(gridcolor="#f8fafc", range=[BASE_MONTH - pd.DateOffset(days=20), x_end],
                                  dtick="M12", tickformat="%Y"))
-    st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
+    show_chart(fig)
     sq = "display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px;vertical-align:-1px;"
     st.markdown("<div style='font-size:0.75rem;color:#475569;margin:-6px 0 8px;'>"
                 + _t(is_en, "Money by source:", "Гроші за джерелами:")
@@ -327,7 +338,7 @@ def render_research(sb, is_en: bool) -> None:
             d_ua, d_en = DIRECTIONS[k][0], DIRECTIONS[k][1]
             fig.add_trace(go.Bar(
                 x=labels, y=seg, base=base, offsetgroup=g, legendgroup=g,
-                name=_t(is_en, d_en, d_ua), marker_color=DIR_COLORS.get(k, "#94a3b8"),
+                name=_t(is_en, d_en, d_ua), marker_color=DIR_COLORS.get(k, "#94a3b8"), showlegend=False,
                 marker_line=dict(color="#ffffff", width=0.5),
                 customdata=np.stack([raw[f"arxiv_share_{k}"], parts[f"arxiv_share_{k}"] * 100,
                                      height.reindex(pct.index)], axis=1),
@@ -340,10 +351,15 @@ def render_research(sb, is_en: bool) -> None:
                       paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
                       margin=dict(l=40, r=8, t=8, b=8),
                       font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
-                      legend=dict(orientation="h", yanchor="top", y=-0.12, x=0, font=dict(size=9),
-                                  groupclick="toggleitem", itemwidth=30),
+                      showlegend=False,
                       yaxis=dict(gridcolor="#f1f5f9", ticksuffix=" %", automargin=False))
-    st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
+    show_chart(fig)
+    sq = "display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 8px;vertical-align:-1px;"
+    for g, (ua, en) in GROUPS.items():
+        items = "".join(f"<span style='white-space:nowrap'><span style='{sq}background:{DIR_COLORS.get(k, '#94a3b8')}'></span>"
+                        f"{_t(is_en, v[1], v[0])}</span> " for k, v in DIRECTIONS.items() if v[3] == g)
+        st.markdown(f"<div style='font-size:0.72rem;color:#475569;line-height:1.7;margin:0 0 4px;'>"
+                    f"<b>{_t(is_en, en, ua)}:</b>{items}</div>", unsafe_allow_html=True)
     st.caption(_t(
         is_en,
         "Left bar of each quarter — growth of AI autonomy (features from the AI system definition, Art. 3(1) of "
