@@ -4,6 +4,12 @@ name: Probe - DeepSeek jobs on MokaHR
 # Запуск: Actions -> «Probe - DeepSeek jobs on MokaHR» -> Run workflow; результат - у журналі кроку.
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "deepseek - сторінка DeepSeek на MokaHR; cn_careers - пошук сторінок найму інших китайських лабораторій"
+        type: choice
+        default: deepseek
+        options: [deepseek, cn_careers]
 
 jobs:
   probe:
@@ -20,8 +26,12 @@ jobs:
       - run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt cryptography
+      - name: Probe - сторінки найму китайських лабораторій
+        if: ${{ inputs.target == 'cn_careers' }}
+        run: python -m tools.probe_cn_careers
       - name: Probe MokaHR
+        if: ${{ inputs.target != 'cn_careers' }}
         run: python -m tools.probe_mokahr
       - name: Dry run - збирач DeepSeek (без запису)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && inputs.target != 'cn_careers' }}
         run: python -m collectors.jobs_deepseek --dry-run
