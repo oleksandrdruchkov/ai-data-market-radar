@@ -335,8 +335,8 @@ st.query_params["lang"] = selected_lang.lower()     # посилання збе�
 is_en = (selected_lang == "EN")
 
 L = {
-    "dominant": "DOMINANT CORE" if is_en else "ДОМІНУЮЧЕ ЯДРО",
-    "indexed": "INDEXED SIGNALS" if is_en else "ПРОІНДЕКСОВАНО",
+    "dominant": "TOP SKILL" if is_en else "НАЙЧАСТІША НАВИЧКА",
+    "indexed": "OPEN POSTINGS" if is_en else "ВІДКРИТИХ ВАКАНСІЙ",
     "status": "DATA COLLECTION" if is_en else "СТАН ЗБОРУ ДАНИХ",
     "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Попит на ринку",
     "tab_future": "🔮 Future Roles (3–6 Mo.)" if is_en else "🔮 Майбутні ролі (3–6 міс.)",
@@ -420,24 +420,43 @@ else:
                  else f"Свіжі {feed['fresh']} з {feed['total']} джерел")
     feed_note = ("last run " if is_en else "останній збір ") + _ago(feed["hours"])
 
+# Плитки рахують вакансії, а не згадки навичок. total_skills - сума згадок (вакансія з п'ятьма
+# навичками входить у неї п'ять разів), тому раніше плитка показувала 1 645 для 383 вакансій.
+from metrics.vacancies import vacancy_summary
+vac = vacancy_summary(load_vacancy_counts(), reg_lookup)
+
 top_skill_name = "N/A"
 top_skill_share = 0
+share_unit = "of postings with skills" if is_en else "вакансій із навичками"
 
 if not filtered_skills.empty and "vacancy_count" in filtered_skills.columns:
     agg_temp = filtered_skills.groupby("skill_name")["vacancy_count"].sum().sort_values(ascending=False)
     if not agg_temp.empty and total_skills > 0:
         top_skill_name = agg_temp.index[0]
-        top_skill_share = int((agg_temp.iloc[0] / total_skills) * 100)
+        if vac and vac["with_skills"] > 0:
+            # частка вакансій, у яких є ця навичка (кожна вакансія рахується один раз)
+            top_skill_share = min(100, round(agg_temp.iloc[0] / vac["with_skills"] * 100))
+        else:                                   # без sql/031 - стара частка серед усіх згадок
+            top_skill_share = int((agg_temp.iloc[0] / total_skills) * 100)
+            share_unit = "of skill mentions" if is_en else "згадок навичок"
+
+if vac:
+    indexed_main = f"{vac['total']:,}".replace(",", " ")
+    indexed_note = (f"{vac['with_skills']} with skills · {total_skills:,} skill mentions" if is_en
+                    else f"{vac['with_skills']} із навичками · {total_skills:,} згадок навичок".replace(",", " "))
+else:
+    indexed_main = "—"
+    indexed_note = (f"{total_skills:,} skill mentions" if is_en else f"{total_skills:,} згадок навичок".replace(",", " "))
 
 st.markdown(f"""
 <div class="market-status-bar">
   <div class="market-indicator">
     <span class="indicator-title">{L['dominant']} ({reg_lookup})</span>
-    <span class="indicator-val">{top_skill_name} <span class="badge-blue">{top_skill_share}%</span></span>
+    <span class="indicator-val" style="flex-wrap:wrap;">{top_skill_name} <span class="badge-blue">{top_skill_share}%</span> <span style="font-size:0.7rem; color:#64748b; font-weight:500;">{share_unit}</span></span>
   </div>
   <div class="market-indicator" style="margin-top:2px;">
     <span class="indicator-title">{L['indexed']}</span>
-    <span class="indicator-val">{total_skills:,}</span>
+    <span class="indicator-val" style="flex-wrap:wrap;">{indexed_main} <span style="font-size:0.7rem; color:#64748b; font-weight:500;">{indexed_note}</span></span>
   </div>
   <div class="market-indicator" style="margin-top:2px;">
     <span class="indicator-title">{L['status']}</span>
