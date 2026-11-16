@@ -1,6 +1,6 @@
 -- =====================================================================
 -- 029_cn_lab_jobs.sql
--- Відкриті вакансії китайських лабораторій-лідерів (DeepSeek, Moonshot, MiniMax).
+-- Відкриті вакансії китайських лабораторій-лідерів (DeepSeek, Moonshot, Zhipu, MiniMax).
 -- Значення пише collectors/cn_lab_jobs.py: знімок кількості вакансій на сторінці найму на дату.
 -- Це кількість оголошень конкретних компаній, а не частка ринку: з Indeed AI Tracker
 -- не усереднюється і на лінію «Фахівці ШІ» не лягає.
@@ -16,6 +16,9 @@ INSERT INTO dim_metrics (metric_id, name_ua, name_en, kind, numerator_def, denom
   ('cn_lab_jobs_moonshot', 'Відкриті вакансії Moonshot (Kimi)', 'Open job postings at Moonshot (Kimi)', 'stock',
    'лічильник jobStats.total сторінки найму', NULL, 'count', 'MokaHR (app.mokahr.com/social-recruitment/moonshot/148506)',
    'daily', 'shared', 'Усі відкриті вакансії сторінки соціального найму на дату запуску.'),
+  ('cn_lab_jobs_zhipu', 'Відкриті вакансії Zhipu (Z.ai)', 'Open job postings at Zhipu (Z.ai)', 'stock',
+   'лічильник jobStats.total сторінки найму', NULL, 'count', 'MokaHR (app.mokahr.com/social-recruitment/zphz/148983)',
+   'daily', 'shared', 'Усі відкриті вакансії сторінки соціального найму на дату запуску.'),
   ('cn_lab_jobs_minimax', 'Відкриті вакансії MiniMax', 'Open job postings at MiniMax', 'stock',
    'поле count пошуку вакансій на сторінці найму', NULL, 'count', 'Feishu (vrfi1sk8a0.jobs.feishu.cn/379481)',
    'daily', 'shared', 'Усі відкриті вакансії сторінки найму на дату запуску, разом зі стажуваннями.'),
@@ -27,7 +30,7 @@ ON CONFLICT (metric_id) DO NOTHING;
 
 INSERT INTO ops_sources (source, collector, fact_table, collection_method, expected_every_hours, notes) VALUES
   ('cn_lab_jobs', 'collectors/cn_lab_jobs.py', 'fct_metric_values', 'scrape', 24,
-   'Сторінки найму DeepSeek, Moonshot (MokaHR) і MiniMax (Feishu); без ключів і без моделі')
+   'Сторінки найму DeepSeek, Moonshot, Zhipu (MokaHR) і MiniMax (Feishu); без ключів і без моделі')
 ON CONFLICT (source) DO NOTHING;
 
 INSERT INTO ops_schema_migrations (version) VALUES ('029_cn_lab_jobs') ON CONFLICT DO NOTHING;

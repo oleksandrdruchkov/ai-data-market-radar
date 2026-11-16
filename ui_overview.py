@@ -113,6 +113,29 @@ def load_people_monthly(sb) -> pd.DataFrame:
     return us.groupby("month", as_index=False)["value"].mean().assign(region="US")
 
 
+CN_LAB_NAMES = {"deepseek": "DeepSeek", "moonshot": "Moonshot", "minimax": "MiniMax", "zhipu": "Zhipu"}   # як у collectors/cn_lab_jobs.py
+
+
+def load_cn_labs(sb) -> dict:
+    """Останній знімок відкритих вакансій китайських лабораторій (collectors/cn_lab_jobs.py):
+    {"day": дата, "labs": {назва: кількість}}; лише лабораторії з даними за останню дату."""
+    try:
+        rows = (sb.table("fct_metric_values").select("metric_id,period_start,value")
+                .like("metric_id", "cn_lab_jobs_%").eq("region", "CN")
+                .order("period_start", desc=True).limit(30).execute().data or [])
+    except Exception:
+        rows = []
+    if not rows:
+        return {"day": None, "labs": {}}
+    day = rows[0]["period_start"]
+    labs = {}
+    for r in rows:
+        if r["period_start"] == day and r.get("value") is not None:
+            key = r["metric_id"].removeprefix("cn_lab_jobs_")
+            labs[CN_LAB_NAMES.get(key, key.title())] = int(float(r["value"]))
+    return {"day": pd.Timestamp(day), "labs": labs}
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def load_growth(_sb) -> tuple[dict | None, str | None]:
     try:
@@ -124,7 +147,7 @@ def load_growth(_sb) -> tuple[dict | None, str | None]:
                            .eq("period_type", "quarter").in_("ticker", list(HYPERSCALERS))
                            .in_("metric", ["capex", "ocf", "debt_issued", "debt_repaid", "equity_issued"])
                            .gte("period_end", "2023-10-01").execute().data)
-        return {"t50": t50, "eci": eci, "ai": ai, "fin": fin}, None
+        return {"t50": t50, "eci": eci, "ai": ai, "fin": fin, "cn_labs": load_cn_labs(_sb)}, None
     except Exception as ex:
         return None, str(ex)[:300]
 
@@ -286,16 +309,28 @@ def render_growth(sb, is_en: bool) -> None:
     with c2:
         by_country = ", ".join(f"{r} ×{v:.1f}" for r, v in sorted(people["latest"].items(), key=lambda kv: -kv[1]))
         n_reg = len(people["regions"])
+        cn = data.get("cn_labs") or {"day": None, "labs": {}}
+        if cn["labs"]:
+            cn_list = ", ".join(f"{k} {v}" for k, v in sorted(cn["labs"].items(), key=lambda kv: -kv[1]))
+            cn_en = (f" China is not in the tracker (Indeed does not operate there). Shown separately, not in the line: "
+                     f"{sum(cn['labs'].values())} open postings on the career pages of leading Chinese labs "
+                     f"({cn_list}; {cn['day']:%d.%m.%Y}) — a count of the companies' own postings, not a market share.")
+            cn_ua = (f" Китаю в трекері немає (Indeed там не працює). Окремо, поза лінією: на сторінках найму "
+                     f"китайських лабораторій-лідерів відкрито {sum(cn['labs'].values())} вакансій "
+                     f"({cn_list}; {cn['day']:%d.%m.%Y}) — це кількість оголошень самих компаній, а не частка ринку.")
+        else:
+            cn_en = " China is not covered: Indeed does not operate there."
+            cn_ua = " Китаю немає: Indeed там не працює."
         st.markdown(_t(is_en,
                        f"**AI specialists** — share of job postings mentioning AI terms; one line for all "
                        f"{n_reg} countries of the tracker: geometric mean of each country's growth, equal weight "
                        f"(Indeed publishes shares, not posting counts, so countries cannot be summed or weighted "
-                       f"by size). Latest month: {by_country}. China is not covered: Indeed does not operate there. "
+                       f"by size). Latest month: {by_country}.{cn_en} "
                        f"Counts keywords, not job titles. Source: Indeed Hiring Lab AI Tracker (CC BY 4.0).",
                        f"**Фахівці ШІ** — частка вакансій, що згадують терміни ШІ; одна лінія за всіма країнами "
                        f"трекера ({n_reg}): середнє геометричне зростання країн, рівна вага (Indeed публікує частки, "
                        f"а не кількість вакансій, тож скласти країни чи зважити їх за розміром неможливо). "
-                       f"Останній місяць: {by_country}. Китаю немає: Indeed там не працює. "
+                       f"Останній місяць: {by_country}.{cn_ua} "
                        f"Рахує ключові слова, а не посади. Джерело: Indeed Hiring Lab AI Tracker (CC BY 4.0)."))
     with c3:
         st.markdown(_t(is_en,

@@ -60,6 +60,8 @@ def test_collector_series_and_method_version(monkeypatch):
     res = {s.metric_id: s for s in col.fetch_series()}
     assert res["cn_lab_jobs_moonshot"].points[0][1] == 106
     assert res["cn_labs_open_jobs"].points[0][1] == 142
+    monkeypatch.delenv("CN_LAB_JOBS")
+    assert c.CnLabJobs.lab_keys() == ["deepseek", "moonshot", "zhipu", "minimax"]
     monkeypatch.setenv("CN_LAB_JOBS", "moonshot,unknown")
     with pytest.raises(ValueError):
         c.CnLabJobs.lab_keys()

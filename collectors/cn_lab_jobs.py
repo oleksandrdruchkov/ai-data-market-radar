@@ -13,18 +13,18 @@ collectors/cn_lab_jobs.py
 
 Звідки число (перевірено tools/probe_cn_careers.py, 2026-11-16):
   MokaHR  сторінка app.mokahr.com/social-recruitment/<org>/<site>, вбудований лічильник jobStats.total
-          (DeepSeek: high-flyer/140576; Moonshot: moonshot/148506)
+          (DeepSeek: high-flyer/140576; Moonshot: moonshot/148506; Zhipu: zphz/148983 -
+          адреса з кнопки «社会招聘» на zhipuai.cn/zh/joinus)
   Feishu  <host>/api/v1/search/job/posts, поле data.count; перед запитом сайт видає токен
           захисту форми (/api/v1/csrf/token). MiniMax: vrfi1sk8a0.jobs.feishu.cn/379481
 Лише читання публічних сторінок; жодних дій з акаунтами кандидатів.
 
-Не входять: Zhipu (Z.ai) - сторінку зі списком вакансій ще не знайдено; Alibaba - портал найму
-всієї корпорації, а не лабораторії.
+Не входить Alibaba (Qwen): talent.alibaba.com - портал найму всієї корпорації, а не лабораторії.
 
 Сума має сенс лише для незмінного набору лабораторій: набір записано в method_version
-(«v1:deepseek+minimax+moonshot»). Додали лабораторію - версія змінилась, і на графіку це шов.
+(«v1:deepseek+minimax+moonshot+zhipu»). Додали лабораторію - версія змінилась, і на графіку це шов.
 
-Змінні: CN_LAB_JOBS="deepseek,moonshot,minimax"  (які лабораторії збирати)
+Змінні: CN_LAB_JOBS="deepseek,moonshot,zhipu,minimax"  (які лабораторії збирати)
 Запуск: python -m collectors.cn_lab_jobs            (запис у базу)
         python -m collectors.cn_lab_jobs --dry-run  (лише друк, без бази)
 """
@@ -49,6 +49,7 @@ REGION = "CN"
 LABS: dict[str, dict] = {
     "deepseek": {"lab": "DeepSeek", "platform": "mokahr", "org": "high-flyer", "site": "140576"},
     "moonshot": {"lab": "Moonshot", "platform": "mokahr", "org": "moonshot", "site": "148506"},
+    "zhipu": {"lab": "Zhipu (Z.ai)", "platform": "mokahr", "org": "zphz", "site": "148983"},
     "minimax": {"lab": "MiniMax", "platform": "feishu", "host": "vrfi1sk8a0.jobs.feishu.cn", "path": "379481"},
 }
 

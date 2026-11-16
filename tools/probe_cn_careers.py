@@ -3,17 +3,17 @@ tools/probe_cn_careers.py
 Діагностика сторінок найму китайських лабораторій-лідерів (лідери за ECI) - лише читання,
 без запису в базу і без жодних дій з акаунтами кандидатів.
 
-Що вже відомо (запуск 2026-11-16):
+Що з'ясовано (запуски 2026-11-16) і використано в collectors/cn_lab_jobs.py:
   Moonshot (Kimi)  MokaHR: app.mokahr.com/social-recruitment/moonshot/148506 (як DeepSeek)
-  MiniMax          Feishu: vrfi1sk8a0.jobs.feishu.cn/379481
-  Zhipu (Z.ai)     невідомо - шукаємо тут
+  Zhipu (Z.ai)     MokaHR: app.mokahr.com/social-recruitment/zphz/148983 (кнопка на zhipuai.cn/zh/joinus)
+  MiniMax          Feishu: vrfi1sk8a0.jobs.feishu.cn/379481, пошук вакансій віддає data.count
   Alibaba          загальний портал усієї корпорації (talent.alibaba.com), не лабораторії
 
-Цей запуск:
-  1) Feishu (MiniMax): чи віддає сторінка або публічний запит списку загальну кількість вакансій.
-     Викликаються ЛИШЕ: сторінка, видача токена захисту форми і пошук вакансій (читання).
-  2) Zhipu: слова «招聘 / 加入 / join / career» у HTML сайту з контекстом.
-  3) MokaHR (Moonshot): лічильник jobStats і розбивка за категоріями.
+Що друкує:
+  1) Feishu: чи видає сайт токен захисту форми і чи віддає пошук кількість вакансій.
+     Викликаються ЛИШЕ: сторінка, видача токена і пошук вакансій (читання).
+  2) MokaHR: лічильник jobStats і перші вбудовані вакансії сторінок лабораторій.
+  3) Zhipu: адреси найму зі скриптів сторінки joinus (якщо компанія змінить платформу).
 
 Запуск: python -m tools.probe_cn_careers
 """
@@ -125,10 +125,10 @@ def zhipu() -> None:
                 break
 
 
-def moka(org: str) -> None:
-    print(f"\n===== MokaHR: {org} =====")
+def moka(org: str, site: str = "") -> None:
+    print(f"\n===== MokaHR: {org}/{site} =====")
     try:
-        r = requests.get(f"https://app.mokahr.com/social-recruitment/{org}", headers=HEADERS, timeout=TIMEOUT)
+        r = requests.get(f"https://app.mokahr.com/social-recruitment/{org}/{site}".rstrip("/"), headers=HEADERS, timeout=TIMEOUT)
     except Exception as ex:
         print(f"  {type(ex).__name__}: {str(ex)[:120]}")
         return
@@ -178,6 +178,10 @@ def zhipu_chunks() -> None:
 
 
 def main() -> int:
+    feishu("vrfi1sk8a0.jobs.feishu.cn", "379481")
+    moka("high-flyer", "140576")
+    moka("moonshot", "148506")
+    moka("zphz", "148983")
     zhipu_chunks()
     return 0
 
