@@ -7,7 +7,8 @@ collectors/_job_keywords.py
 вакансія завжди дає той самий результат.
 
 Що визначається:
-  навички   назви технологій і методів зі словника SKILLS (латинські назви + китайські відповідники)
+  навички   назви технологій і методів зі словника SKILLS (латинські назви + китайські відповідники);
+            лише для технічних посад: вакансія з напрямом Other навичок не отримує
   напрям    track - за назвою посади й категорією на сторінці найму
   рівень    experience_level - за словами в назві посади («高级», «资深», «实习», Senior ...)
 Чого немає (на відміну від розбору моделлю): перекладу назви посади і формату роботи
@@ -66,7 +67,8 @@ SKILLS: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = [
     ("Megatron", "AI Serving", ("Megatron",), ()),
     ("Distributed Training", "AI Serving", ("Distributed Training",), ("分布式训练",)),
     ("Inference Optimization", "AI Serving", ("Inference Optimization",), ("推理优化", "推理加速", "推理引擎", "推理框架")),
-    ("Model Quantization", "AI Serving", ("Quantization",), ("量化",)),
+    # лише «模型量化» тощо: саме «量化» в китайських вакансіях часто означає кількісну торгівлю
+    ("Model Quantization", "AI Serving", ("Quantization",), ("模型量化", "量化压缩", "量化推理", "量化部署")),
     # навчання після попереднього
     ("Reinforcement Learning", "Post-training", ("Reinforcement Learning",), ("强化学习",)),
     ("RLHF", "Post-training", ("RLHF",), ()),
@@ -146,6 +148,8 @@ _EDGE = r"A-Za-z0-9_"
 
 
 def _latin_re(term: str) -> re.Pattern:
+    if term == "Go":      # мова Go, а не «Go-to-market» чи «Go to ...»
+        return re.compile(rf"(?<![{_EDGE}.\-])Go(?![{_EDGE}+#\-])(?! to\b)")
     """Ціле слово: поруч не може бути латинської літери чи цифри (китайський ієрогліф - може).
     «Java» не збігається з «JavaScript», «C++» шукається як є."""
     flags = 0 if (term in CASE_SENSITIVE or (len(term) <= 4 and term.isupper())) else re.I
@@ -165,9 +169,17 @@ def extract_skills(text: str) -> list[Skill]:
     return found
 
 
+# Нетехнічні посади: напрям Other і без навичок. Опис такої вакансії (юрист, продажі, маркетинг)
+# згадує «大模型» чи «Agent» як продукт компанії, а не як вимогу до фахівця - у попит на навички
+# це не рахується. Перевіряється лише назва посади і раніше за TRACK_RULES.
+NON_TECH = ("产品经理", "产品运营", "运营", "销售", "市场", "营销", "法务", "律师", "财务", "税务", "会计", "审计",
+            "内控", "招聘", "人力", "hrbp", "talent", "采购", "投资", "公关", "品牌", "商务", "行政", "设计师",
+            "客户成功", "客服", "pmo", "项目管理", "business development", "marketing", "sales", "recruit",
+            "legal", "finance", "investor", "branding", " pr", "pr内容", "gtm", "seo", "合规", "政府", "战略")
+
 # Напрям: перший рядок, слова якого є в назві посади або категорії. Порядок має значення.
 TRACK_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("AI Alignment", ("alignment", "safety", "red team", "对齐", "模型安全", "红队", "安全研究")),
+    ("AI Alignment", ("alignment", "safety", "red team", "对齐", "模型安全", "红队", "安全研究", "ai 安全", "ai安全")),
     ("Machine Learning", ("算法", "模型", "深度学习", "机器学习", "研究员", "研究科学家", "训练", "推理", "多模态",
                           "llm", "machine learning", "research", "nlp", "aigc", "强化学习", "智能体", "agent",
                           "语音", "视觉", "评测", "prompt", "提示词")),
@@ -176,7 +188,8 @@ TRACK_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("Analytics Engineering", ("数据分析", "分析师", "data analyst", "商业分析", "数据科学", "data scien")),
     ("Backend", ("后端", "服务端", "backend", "后台", "架构", "基础架构", "infra", "sre", "运维", "分布式", "系统",
                  "平台", "全栈", "前端", "客户端", "开发工程师", "软件工程师", "engineer", "测试", "网络", "编译",
-                 "gpu", "集群", "高性能", "安全工程")),
+                 "gpu", "集群", "高性能", "安全工程", "研发", "工程师", "开发", "developer", "程序", "技术类",
+                 "逆向", "安全")),
 ]
 
 LEVEL_RULES: list[tuple[str, tuple[str, ...]]] = [
@@ -186,7 +199,14 @@ LEVEL_RULES: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+def is_non_tech(title: str) -> bool:
+    t = f" {title.lower()}"
+    return any(w in t for w in NON_TECH)
+
+
 def classify_track(title: str, category: str | None = None) -> str:
+    if is_non_tech(title):
+        return "Other"
     text = f"{title} {category or ''}".lower()
     for track, words in TRACK_RULES:
         if any(w in text for w in words):
@@ -205,11 +225,13 @@ def classify_level(title: str) -> str:
 
 def extract(title: str, description: str, category: str | None = None) -> dict:
     """Поля факту вакансії, які раніше давала модель. Назва лишається мовою оригіналу."""
+    track = classify_track(title, category)
     return {
         "experience_level": classify_level(title),
         "work_model": "Not Specified",
-        "track": classify_track(title, category),
+        "track": track,
         "extraction_method": METHOD,
         "prompt_version": KEYWORDS_VERSION,
-        "_skills": extract_skills(f"{title}\n{category or ''}\n{description or ''}"),
+        # посада без технічного напряму (Other) навичок не отримує - див. NON_TECH
+        "_skills": extract_skills(f"{title}\n{category or ''}\n{description or ''}") if track != "Other" else [],
     }

@@ -330,7 +330,9 @@ L = {
 }
 
 with col_reg:
-    reg_options = ["All Regions", "Europe", "US", "APAC"] if is_en else ["Всі регіони", "Europe", "US", "APAC"]
+    # China - окремий регіон (sql/030): вакансії китайських лабораторій не входять в APAC
+    reg_options = (["All Regions", "Europe", "US", "APAC", "China"] if is_en
+                   else ["Всі регіони", "Europe", "US", "APAC", "China"])
     selected_region = st.selectbox(
         "Region Scope",
         options=reg_options,

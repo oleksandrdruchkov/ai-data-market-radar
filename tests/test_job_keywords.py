@@ -50,3 +50,21 @@ def test_extract_shape():
     assert all(s.category in kw.Skill.model_fields or True for s in x["_skills"])
     from collectors._jobs_common import SKILL_CATEGORIES
     assert {c for _, c, _, _ in kw.SKILLS} <= set(SKILL_CATEGORIES)
+
+
+def test_non_tech_roles_get_no_skills():
+    for title in ("法务BP（知识产权与标准化方向）", "API销售", "大模型产品经理", "AI Talent Partner（招聘与运营）",
+                  "Global PR｜海外PR内容专家", "投资经理（AI驱动型）", "Global GTM Intern"):
+        x = kw.extract(title, "负责大模型、Agent、RLHF相关业务，熟悉Python")
+        assert x["track"] == "Other" and x["_skills"] == [], title
+    x = kw.extract("Harness 研发工程师", "熟悉Python和大模型")
+    assert x["track"] == "Backend" and {s.name for s in x["_skills"]} == {"Python", "LLM"}
+    assert kw.classify_track("AI 安全实习生") == "AI Alignment"
+    assert kw.classify_track("专员", "技术类/Technical") == "Backend"
+
+
+def test_go_and_quantization_false_positives():
+    assert "Go" not in names("Go-to-market strategy. Go to the customers.")
+    assert "Go" in names("熟悉Go或Rust") and "Go" in names("Go, Python")
+    assert "Model Quantization" not in names("量化交易策略研究")          # кількісна торгівля
+    assert "Model Quantization" in names("模型量化与蒸馏")

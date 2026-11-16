@@ -11,7 +11,9 @@ Moonshot (Kimi) і Zhipu (Z.ai) - сторінки найму на MokaHR, MiniM
 Feishu: список вакансій - POST <host>/api/v1/search/job/posts (по 100), перед ним сайт видає
 токен захисту форми (/api/v1/csrf/token). Лише читання публічних сторінок.
 
-Повнота: зібрано менше, ніж лічильник сторінки, - зниклі вакансії в цьому запуску не закриваються.
+Повнота: зниклі вакансії закриваються лише після повного списку. Лічильник сторінки MokaHR буває
+на кілька вакансій більший за список відкритих (до нього входять і не відкриті), тому список
+вважається повним, якщо його пройдено до кінця і в ньому не менше 90 % лічильника.
 
 Змінні: CN_LABS="moonshot,zhipu,minimax"  (які лабораторії збирати)
 Запуск: python -m collectors.jobs_cn_labs            (запис у базу)
@@ -30,7 +32,9 @@ from urllib.parse import unquote
 from core import RawItem
 from collectors import _job_keywords as keywords
 from collectors._jobs_common import JobsCollector
-from collectors.jobs_deepseek import HEADERS, cn_vacancy_fact, fetch_all as moka_fetch_all
+from collectors.jobs_deepseek import HEADERS, MAX_PAGES, PAGE_SIZE, cn_vacancy_fact, fetch_all as moka_fetch_all
+
+MOKA_MAX = MAX_PAGES * PAGE_SIZE      # більше за стільки вакансій список MokaHR не читається
 
 FEISHU_PAGE = 100
 FEISHU_MAX_PAGES = 10
@@ -96,6 +100,13 @@ def feishu_fetch_all(host: str, path: str, company: str, session=None) -> tuple[
     return list(seen.values()), total
 
 
+def moka_complete(n_jobs: int, total: int | None, mode: str) -> bool:
+    """Чиста функція: чи список MokaHR повний (див. «Повнота» вгорі)."""
+    if mode != "api" or n_jobs >= MOKA_MAX:
+        return False
+    return total is None or n_jobs >= 0.9 * total
+
+
 class LabJobs(JobsCollector):
     """Спільне для лабораторій: повний список сторінки найму -> розбір ключовими словами."""
     collection_method = "scrape"
@@ -104,17 +115,18 @@ class LabJobs(JobsCollector):
     company = ""
     platform = ""
 
-    def load(self) -> tuple[list[dict], int | None]:
+    def load(self) -> tuple[list[dict], int | None, bool]:
+        """(вакансії, лічильник сторінки, чи список повний)."""
         raise NotImplementedError
 
     def fetch(self):
-        jobs, total = self.load()
+        jobs, total, complete = self.load()
         with_desc = sum(1 for j in jobs if j.get("description") and not j["description"].startswith("职能："))
         self.log.info(f"{self.company} ({self.platform}): відкритих вакансій {len(jobs)}, "
                       f"за лічильником сторінки {total}, з описом {with_desc}")
         if not jobs:
             raise ValueError(f"{self.company}: список вакансій порожній - підозріло, нічого не закриваємо")
-        if total is not None and len(jobs) < total:
+        if not complete:
             self.tracks_presence = False
             self.log.warning("Зібрано не всі вакансії: зниклі в цьому запуску не закриваються")
         for job in jobs:
@@ -133,9 +145,7 @@ class MokaLabJobs(LabJobs):
 
     def load(self):
         jobs, total, mode = moka_fetch_all(log=self.log, org=self.org, site=self.site, company=self.company)
-        if mode != "api":
-            self.tracks_presence = False
-        return jobs, total
+        return jobs, total, moka_complete(len(jobs), total, mode)
 
 
 class MoonshotJobs(MokaLabJobs):
@@ -155,7 +165,8 @@ class MiniMaxJobs(LabJobs):
     host, path = "vrfi1sk8a0.jobs.feishu.cn", "379481"
 
     def load(self):
-        return feishu_fetch_all(self.host, self.path, self.company)
+        jobs, total = feishu_fetch_all(self.host, self.path, self.company)
+        return jobs, total, total is None or len(jobs) >= total
 
 
 LABS = {"moonshot": MoonshotJobs, "zhipu": ZhipuJobs, "minimax": MiniMaxJobs}
@@ -179,14 +190,14 @@ def dry_run() -> int:
         c = cls.__new__(cls)
         c.log = logging.getLogger(f"dry-run.{key}")
         try:
-            jobs, total = c.load()
+            jobs, total, complete = c.load()
         except Exception as e:
             print(f"\n=== {cls.company}: ПОМИЛКА {type(e).__name__}: {str(e)[:200]}")
             bad += 1
             continue
         facts = [cn_vacancy_fact(j, cls.company) for j in jobs]
         skills = Counter(s.name for f in facts for s in f["_skills"])
-        print(f"\n=== {cls.company}: зібрано {len(jobs)}, лічильник {total}, "
+        print(f"\n=== {cls.company}: зібрано {len(jobs)}, лічильник {total}, повний список: {complete}, "
               f"з описом {sum(1 for j in jobs if len(j.get('description') or '') > 80)}, "
               f"з навичками {sum(1 for f in facts if f['_skills'])}, з датою {sum(1 for j in jobs if j.get('posted_date'))}, "
               f"з містом {sum(1 for j in jobs if j.get('location'))}")
