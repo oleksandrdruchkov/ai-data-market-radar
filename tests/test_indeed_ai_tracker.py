@@ -52,3 +52,12 @@ def test_first_run_takes_whole_history(monkeypatch):
     res = {r.region: r for r in make([], monkeypatch).fetch_series()}
     assert res["US"].points[0] == (date(2019, 1, 1), 1.75)
     assert res["DE"].error and not res["DE"].points                           # немає країни - помилка, без підстановки
+
+
+def test_all_countries_of_the_file_by_default(monkeypatch):
+    monkeypatch.delenv("INDEED_AI_REGIONS", raising=False)
+    res = {r.region: r for r in make([], monkeypatch).fetch_series()}
+    assert set(res) == {"US", "GB"} and not res["GB"].error                     # усі країни файлу
+
+    monkeypatch.setenv("INDEED_AI_EXCLUDE", "gb")
+    assert [r.region for r in make([], monkeypatch).fetch_series()] == ["US"]

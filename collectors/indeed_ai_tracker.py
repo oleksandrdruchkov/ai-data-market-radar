@@ -15,9 +15,12 @@ collectors/indeed_ai_tracker.py
 
 Обмеження ряду: рахує ключові слова в оголошенні, а не посади ШІ-фахівців. Зміни
 правил оформлення вакансій можуть його зсувати (напр., Онтаріо з 2026 р. вимагає
-розкривати використання ШІ при наймі) - тому за замовчуванням лише US, GB, DE.
+розкривати використання ШІ при наймі). Збираються всі країни файлу: головний графік
+показує одну лінію за всіма країнами (metrics/people.py), бо інші його складники не
+мають розбивки за регіонами. Китаю у файлі немає: Indeed там не працює.
 
-Змінні: INDEED_AI_REGIONS="US,GB,DE"
+Змінні: INDEED_AI_REGIONS="ALL"   усі країни файлу (за замовчуванням) або перелік "US,GB,DE"
+        INDEED_AI_EXCLUDE="CA"    країни, які не брати (за замовчуванням порожньо)
         INDEED_AI_URL - інша адреса файлу (за замовчуванням raw.githubusercontent.com)
 Запуск: python -m collectors.indeed_ai_tracker
 """
@@ -80,9 +83,13 @@ class IndeedAiTracker(MetricSeriesCollector):
     collector_version = "1"
     method_version = "v1"
 
-    def regions(self) -> list[str]:
-        raw = os.getenv("INDEED_AI_REGIONS", "US,GB,DE").split(",")
-        return [r.strip().upper() for r in raw if r.strip()]
+    def regions(self, available: list[str] | None = None) -> list[str]:
+        """Країни для збору: перелік з INDEED_AI_REGIONS або всі країни файлу (ALL), без INDEED_AI_EXCLUDE."""
+        raw = [r.strip().upper() for r in os.getenv("INDEED_AI_REGIONS", "ALL").split(",") if r.strip()]
+        skip = {r.strip().upper() for r in os.getenv("INDEED_AI_EXCLUDE", "").split(",") if r.strip()}
+        if not raw or "ALL" in raw:
+            raw = sorted(available or [])
+        return [r for r in raw if r not in skip]
 
     def since(self, metric_id: str, region: str) -> date:
         """Перший запуск - уся історія файлу; далі - як у каркасі (остання точка мінус LOOKBACK_DAYS)."""
@@ -97,7 +104,7 @@ class IndeedAiTracker(MetricSeriesCollector):
     def fetch_series(self) -> list[SeriesResult]:
         data = parse_ai_tracker_csv(self.download())   # не прочитався файл - впаде весь запуск
         out = []
-        for cc in self.regions():
+        for cc in self.regions(list(data)):
             res = SeriesResult(metric_id=METRIC_ID, region=cc)
             pts = data.get(cc)
             if not pts:

@@ -5,7 +5,8 @@ ui_overview.py
 1) «У скільки разів більше, ніж у грудні 2023» - одна логарифмічна вісь разів:
    - автономність моделі-лідера: METR T50 (autonomy_t50_frontier); після останнього виміру -
      оцінка за Epoch ECI (зв'язок log10(1 + T50 хв) = a + b * ECI, підібраний з 2024-01), пунктир;
-   - фахівці ШІ: частка вакансій зі згадкою ШІ, Indeed AI Tracker, США (indeed_ai_share);
+   - фахівці ШІ: частка вакансій зі згадкою ШІ, Indeed AI Tracker, усі країни трекера одною лінією -
+     середнє геометричне зростання країн, рівна вага (indeed_ai_share, metrics/people.py);
    - гроші: квартальні капвитрати Amazon, Alphabet, Meta, Microsoft (SEC EDGAR), простір під
      лінією залито за джерелами: власний заробіток / борг / продаж акцій (частки надходжень
      кварталу, застосовані до капвитрат - компанії не розкривають, з чого оплачено будівництво).
@@ -27,6 +28,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from collectors.arxiv_counts import DIRECTIONS, GROUPS
+from metrics.people import people_growth
 
 BASE_MONTH = pd.Timestamp("2023-12-01")
 BASE_QUARTER_END = pd.Timestamp("2023-12-31")
@@ -84,12 +86,39 @@ def _fetch(sb, metric_id: str, region: str | None = "GLOBAL", cols: str = "perio
 
 # ---------------------------------------------------------------- дані головного графіка
 
+def load_people_monthly(sb) -> pd.DataFrame:
+    """Місячна частка вакансій зі згадкою ШІ за країнами: region, month, value.
+    Основне джерело - представлення sql/028 (усі країни трекера); без нього - лише США, як раніше."""
+    try:
+        rows, off = [], 0
+        while True:
+            page = (sb.table("v_indeed_ai_share_monthly").select("region,month,value")
+                    .gte("month", (BASE_MONTH - pd.DateOffset(months=1)).strftime("%Y-%m-%d"))
+                    .order("region").order("month").range(off, off + 999).execute().data or [])
+            rows += page
+            if len(page) < 1000:
+                break
+            off += 1000
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df["month"] = pd.to_datetime(df["month"])
+            df["value"] = pd.to_numeric(df["value"], errors="coerce")
+            return df
+    except Exception:
+        pass
+    us = _fetch(sb, "indeed_ai_share", "US")
+    if us.empty:
+        return pd.DataFrame(columns=["region", "month", "value"])
+    us = us.assign(month=us["period_start"].dt.to_period("M").dt.to_timestamp())
+    return us.groupby("month", as_index=False)["value"].mean().assign(region="US")
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def load_growth(_sb) -> tuple[dict | None, str | None]:
     try:
         t50 = _fetch(_sb, "autonomy_t50_frontier")
         eci = pd.DataFrame(_sb.table("fct_capability_index").select("release_date,eci").execute().data)
-        ai = _fetch(_sb, "indeed_ai_share", "US")
+        ai = load_people_monthly(_sb)
         fin = pd.DataFrame(_sb.table("fct_lab_financials")
                            .select("ticker,metric,period_end,value,filed_date")
                            .eq("period_type", "quarter").in_("ticker", list(HYPERSCALERS))
@@ -159,8 +188,7 @@ def render_growth(sb, is_en: bool) -> None:
     try:
         aut = autonomy_series(data["t50"], data["eci"])
         money = money_quarters(data["fin"])
-        ai = data["ai"].assign(m=data["ai"]["period_start"].dt.to_period("M").dt.to_timestamp()) \
-                       .groupby("m")["value"].mean()
+        people = people_growth(data["ai"], BASE_MONTH)
     except Exception as ex:
         st.caption(f"⚠️ {type(ex).__name__}: {str(ex)[:200]}")
         return
@@ -187,14 +215,19 @@ def render_growth(sb, is_en: bool) -> None:
                                  marker=dict(size=5), name=_t(is_en, "Money", "Гроші"),
                                  text=txt, hovertemplate="%{text}<br>×%{y:.1f}<extra></extra>"))
     # --- фахівці ШІ
-    if BASE_MONTH in ai.index:
-        a_m = ai[ai.index >= BASE_MONTH] / ai[BASE_MONTH]
+    a_m = people["mult"]
+    if not a_m.empty:
         fig.add_trace(go.Scatter(
             x=a_m.index, y=a_m, mode="lines", line=dict(color=C_PEOPLE, width=2.5),
             name=_t(is_en, "AI specialists", "Фахівці ШІ"),
-            text=[f"{v:.1f} %" for v in ai[ai.index >= BASE_MONTH]],
-            hovertemplate=_t(is_en, "%{x|%b %Y}: %{text} of US postings mention AI<br>×%{y:.1f}<extra></extra>",
-                             "%{x|%m.%Y}: %{text} вакансій США згадують ШІ<br>×%{y:.1f}<extra></extra>")))
+            customdata=np.stack([people["n"].reindex(a_m.index), people["low"].reindex(a_m.index),
+                                 people["high"].reindex(a_m.index)], axis=1),
+            hovertemplate=_t(
+                is_en,
+                "%{x|%b %Y}: ×%{y:.1f} — mean of %{customdata[0]:.0f} countries<br>"
+                "from ×%{customdata[1]:.1f} to ×%{customdata[2]:.1f} across countries<extra></extra>",
+                "%{x|%m.%Y}: ×%{y:.1f} — середнє %{customdata[0]:.0f} країн<br>"
+                "від ×%{customdata[1]:.1f} до ×%{customdata[2]:.1f} між країнами<extra></extra>")))
     # --- автономність
     b0 = aut["base"]
     if b0 and not math.isnan(b0):
@@ -251,11 +284,19 @@ def render_growth(sb, is_en: bool) -> None:
                        f"log10(1 + T50 хв) = {aut['a']:.2f} + {aut['b']:.4f} × ECI (R² {aut['r2']:.2f}, {aut['n']} міс.), "
                        f"смуга ±2σ. Джерела: METR через Epoch AI, Epoch ECI (CC BY 4.0)."))
     with c2:
+        by_country = ", ".join(f"{r} ×{v:.1f}" for r, v in sorted(people["latest"].items(), key=lambda kv: -kv[1]))
+        n_reg = len(people["regions"])
         st.markdown(_t(is_en,
-                       "**AI specialists** — share of US job postings mentioning AI terms. Counts keywords, not "
-                       "job titles. Source: Indeed Hiring Lab AI Tracker (CC BY 4.0).",
-                       "**Фахівці ШІ** — частка вакансій США, що згадують терміни ШІ. Рахує ключові слова, а не "
-                       "посади. Джерело: Indeed Hiring Lab AI Tracker (CC BY 4.0)."))
+                       f"**AI specialists** — share of job postings mentioning AI terms; one line for all "
+                       f"{n_reg} countries of the tracker: geometric mean of each country's growth, equal weight "
+                       f"(Indeed publishes shares, not posting counts, so countries cannot be summed or weighted "
+                       f"by size). Latest month: {by_country}. China is not covered: Indeed does not operate there. "
+                       f"Counts keywords, not job titles. Source: Indeed Hiring Lab AI Tracker (CC BY 4.0).",
+                       f"**Фахівці ШІ** — частка вакансій, що згадують терміни ШІ; одна лінія за всіма країнами "
+                       f"трекера ({n_reg}): середнє геометричне зростання країн, рівна вага (Indeed публікує частки, "
+                       f"а не кількість вакансій, тож скласти країни чи зважити їх за розміром неможливо). "
+                       f"Останній місяць: {by_country}. Китаю немає: Indeed там не працює. "
+                       f"Рахує ключові слова, а не посади. Джерело: Indeed Hiring Lab AI Tracker (CC BY 4.0)."))
     with c3:
         st.markdown(_t(is_en,
                        "**Money** — quarterly capex of Amazon, Alphabet, Meta, Microsoft (whole companies, not AI only). "
