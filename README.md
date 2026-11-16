@@ -27,7 +27,7 @@ different units can share one chart without being mixed.
 | Line | What it measures | Source |
 |---|---|---|
 | **Autonomy of the leading model** | METR 50% time horizon $T_{50}$: the length of a software task (in hours of expert human work) that the best model completes in half of attempts. Running maximum over release dates. | METR, via Epoch AI (CC BY 4.0) |
-| **AI specialists** | Share of job postings that mention AI, United States. | Indeed Hiring Lab AI Tracker (CC BY 4.0) |
+| **AI specialists** | Share of job postings that mention AI; one line for all countries of the tracker (geometric mean of each country's growth, equal weight). China is not in the tracker. | Indeed Hiring Lab AI Tracker (CC BY 4.0) |
 | **Money** | Quarterly capital expenditure of Amazon, Alphabet, Meta and Microsoft. | SEC EDGAR filings |
 
 **After the last METR measurement** (METR stopped updating in 2026) the autonomy line continues
