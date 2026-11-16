@@ -188,6 +188,12 @@ import ui_overview
 # Streamlit перечитує app.py при кожному відкритті сторінки, а імпортований модуль тримає в пам'яті
 # з моменту запуску. Без цього після оновлення коду графіки з ui_overview.py лишались старими
 # до ручного перезапуску застосунку.
+# Те саме стосується модулів проєкту, які імпортує сам ui_overview: без їх перечитування нова
+# функція в metrics/people.py давала ImportError до перезапуску застосунку.
+import sys
+for _name in ("metrics.people", "collectors.arxiv_counts"):
+    if _name in sys.modules:
+        importlib.reload(sys.modules[_name])
 importlib.reload(ui_overview)
 from ui_overview import show_chart
 
