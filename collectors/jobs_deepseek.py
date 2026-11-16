@@ -1,6 +1,6 @@
 """
 collectors/jobs_deepseek.py
-Вакансії DeepSeek (High-Flyer, Китай, APAC) з офіційної сторінки на MokaHR:
+Вакансії DeepSeek (High-Flyer, Китай; регіон China) з офіційної сторінки на MokaHR:
 https://app.mokahr.com/social-recruitment/high-flyer/140576
 
 Як працює:
@@ -11,7 +11,8 @@ https://app.mokahr.com/social-recruitment/high-flyer/140576
      AES-CBC, ключ = necromancer, iv = aesIv, PKCS7 (функція we() у скрипті застосунку).
      У розшифрованих вакансіях є повний опис (jobDescription) і місто.
   Якщо запит списку не вдався - запасний режим: 15 вбудованих вакансій без опису.
-Переклад і розбір навичок - core.llm (prompt vacancy_zh_v2).
+Розбір навичок, напряму й рівня - ключовими словами, без мовної моделі (collectors/_job_keywords.py);
+назва посади лишається китайською. До версії 4 розбір і переклад робила Gemini (prompt vacancy_zh_v2).
 
 Повнота: зібрано менше, ніж jobStats.total, - список неповний, зниклі вакансії не закриваються.
 
@@ -37,10 +38,10 @@ from pathlib import Path
 
 from core import RawItem
 from core.http import get_with_retry
+from collectors import _job_keywords as keywords
 from collectors._jobs_common import JobsCollector
 
 SEED_FILE = Path(__file__).parent / "seeds" / "deepseek_manual.json"
-PROMPT_VERSION = "vacancy_zh_v2"
 ORG = os.getenv("MOKA_ORG", "high-flyer")
 SITE = os.getenv("MOKA_SITE", "140576")
 PAGE = f"https://app.mokahr.com/social-recruitment/{ORG}/{SITE}"
@@ -131,7 +132,7 @@ def job_category(job: dict) -> str | None:
     return z if isinstance(z, str) else None
 
 
-def to_payload(job: dict) -> dict:
+def to_payload(job: dict, page: str | None = None, company: str = "DeepSeek") -> dict:
     date = (job.get("openedAt") or job.get("createdAt") or "")[:10] or None
     desc = job_description(job)
     if not desc:
@@ -145,34 +146,39 @@ def to_payload(job: dict) -> dict:
         "description": desc,
         "category": job_category(job),
         "location": job_location(job),
-        "company": "DeepSeek",
-        "url": f"{PAGE}#/job/{job['id']}",
+        "company": company,
+        "url": f"{page or PAGE}#/job/{job['id']}",
         "posted_date": date,
         "commitment": job.get("commitment"),
         "updated_at": job.get("updatedAt"),
     }
 
 
-def open_jobs(raw_jobs: list) -> list[dict]:
-    return [to_payload(j) for j in raw_jobs
+def open_jobs(raw_jobs: list, page: str | None = None, company: str = "DeepSeek") -> list[dict]:
+    return [to_payload(j, page, company) for j in raw_jobs
             if isinstance(j, dict) and j.get("id") and j.get("status", "open") == "open"]
 
 
-def parse_page(page: str) -> tuple[list[dict], int | None]:
+def parse_page(page: str, page_url: str | None = None, company: str = "DeepSeek") -> tuple[list[dict], int | None]:
     """Чиста функція: (відкриті вбудовані вакансії як payload, jobStats.total)."""
     state = embedded_state(page)
     total = (state.get("jobStats") or {}).get("total")
-    return open_jobs(state["jobs"]), (int(total) if str(total).isdigit() else None)
+    return open_jobs(state["jobs"], page_url, company), (int(total) if str(total).isdigit() else None)
 
 
-def fetch_all(session=None, sleep=time.sleep, log=None) -> tuple[list[dict], int | None, str]:
-    """Усі відкриті вакансії з описами. Повертає (вакансії, total, режим «api» | «embedded»)."""
+def fetch_all(session=None, sleep=time.sleep, log=None, org: str | None = None, site: str | None = None,
+              company: str = "DeepSeek") -> tuple[list[dict], int | None, str]:
+    """Усі відкриті вакансії з описами. Повертає (вакансії, total, режим «api» | «embedded»).
+    org / site - сторінка найму на MokaHR (за замовчуванням DeepSeek); так само читаються
+    сторінки інших лабораторій (collectors/jobs_cn_labs.py)."""
     import requests
+    org, site = org or ORG, site or SITE
+    page_url = f"https://app.mokahr.com/social-recruitment/{org}/{site}"
     s = session or requests.Session()
-    s.headers.update({**HEADERS, "Referer": PAGE})
-    page = get_with_retry(PAGE, headers=HEADERS, timeout=60).text
+    s.headers.update({**HEADERS, "Referer": page_url})
+    page = get_with_retry(page_url, headers=HEADERS, timeout=60).text
     state = embedded_state(page)
-    embedded, total = parse_page(page)
+    embedded, total = parse_page(page, page_url, company)
     iv = state.get("aesIv") or ""
     try:
         if not iv:
@@ -181,11 +187,11 @@ def fetch_all(session=None, sleep=time.sleep, log=None) -> tuple[list[dict], int
         for n in range(MAX_PAGES):
             if n:
                 sleep(2)
-            resp = s.post(JOBS_API, json={"orgId": ORG, "siteId": int(SITE), "limit": PAGE_SIZE,
+            resp = s.post(JOBS_API, json={"orgId": org, "siteId": int(site), "limit": PAGE_SIZE,
                                           "offset": n * PAGE_SIZE}, timeout=60)
             resp.raise_for_status()
             batch = open_response(resp.json(), iv).get("jobs") or []
-            for j in open_jobs(batch):
+            for j in open_jobs(batch, page_url, company):
                 seen.setdefault(j["id"], j)
             if len(batch) < PAGE_SIZE or (total and len(seen) >= total):
                 break
@@ -198,11 +204,29 @@ def fetch_all(session=None, sleep=time.sleep, log=None) -> tuple[list[dict], int
         return embedded, total, "embedded"
 
 
+def cn_vacancy_fact(job: dict, company: str) -> dict:
+    """Факт вакансії китайської лабораторії: розбір ключовими словами (collectors/_job_keywords.py),
+    без мовної моделі. Регіон - China, окремо від APAC. Назва посади лишається мовою оригіналу."""
+    return {
+        "title": job["title"],
+        "title_original": job["title"],
+        "company": job.get("company") or company,
+        "location": job.get("location"),
+        "region": "China",
+        "country_code": "CN",
+        "currency": "CNY",
+        "salary_period": "yearly",
+        "source_url": job.get("url"),
+        "event_date": job.get("posted_date"),   # дата відкриття вакансії на сторінці, не дата збору
+        **keywords.extract(job["title"], job.get("description") or "", job.get("category")),
+    }
+
+
 class DeepSeekJobs(JobsCollector):
     source = "deepseek_careers"
     collection_method = "scrape"
     tracks_presence = True        # сторінка дає повний список; неповний - вимикається в fetch()
-    collector_version = "3"
+    collector_version = "4"       # 4: розбір ключовими словами замість Gemini, регіон China
 
     def fetch(self):
         seed = os.getenv("DEEPSEEK_SEED_FILE")
@@ -226,30 +250,7 @@ class DeepSeekJobs(JobsCollector):
             )
 
     def parse(self, raw: RawItem) -> dict | None:
-        job = raw.payload
-        res = self.extract(raw, job["title"], job.get("description") or job["title"], translate=True,
-                           prompt_version=PROMPT_VERSION)
-        if res is None:
-            return None
-        x = res.data
-        return {
-            "title": x.title_en,
-            "title_original": job["title"],
-            "company": job.get("company", "DeepSeek"),
-            "location": job.get("location"),
-            "region": "APAC",
-            "country_code": "CN",
-            "currency": "CNY",
-            "salary_period": "yearly",
-            "experience_level": x.experience_level,
-            "work_model": x.work_model,
-            "track": x.track,
-            "source_url": job.get("url"),
-            "event_date": job.get("posted_date"),   # дата відкриття вакансії на сторінці, не дата збору
-            "extraction_method": res.method,
-            "prompt_version": PROMPT_VERSION,
-            "_skills": x.skills,
-        }
+        return cn_vacancy_fact(raw.payload, "DeepSeek")
 
 
 def dry_run() -> None:
