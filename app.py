@@ -191,7 +191,7 @@ import ui_overview
 # Те саме стосується модулів проєкту, які імпортує сам ui_overview: без їх перечитування нова
 # функція в metrics/people.py давала ImportError до перезапуску застосунку.
 import sys
-for _name in ("metrics.people", "metrics.feed", "collectors.arxiv_counts"):
+for _name in ("metrics.people", "metrics.feed", "metrics.vacancies", "collectors.arxiv_counts"):
     if _name in sys.modules:
         importlib.reload(sys.modules[_name])
 importlib.reload(ui_overview)
@@ -247,6 +247,35 @@ def load_capability_data():
         return pd.DataFrame(res.data), None
     except Exception as ex:
         return pd.DataFrame(), str(ex)[:300]
+
+@st.cache_data(ttl=300)
+def load_vacancy_counts():
+    """Скільки активних вакансій за графіком навичок: регіон x джерело x напрям x рівень (sql/031)."""
+    try:
+        return pd.DataFrame(supabase.table("v_vacancy_counts").select("*").execute().data)
+    except Exception:       # міграцію 031 ще не застосовано - рядок під графіком просто не показується
+        return pd.DataFrame()
+
+
+# Назва джерела вакансій для підпису під графіком навичок
+VACANCY_SOURCES = {"adzuna": "Adzuna", "deepseek_careers": "DeepSeek", "moonshot_careers": "Moonshot",
+                   "zhipu_careers": "Zhipu", "minimax_careers": "MiniMax"}
+
+
+def vacancy_note(counts, region, track, level, is_en):
+    """Рядок під графіком навичок: скільки активних вакансій стоїть за вибраними фільтрами і звідки вони."""
+    from metrics.vacancies import vacancy_summary
+    v = vacancy_summary(counts, region, track, level)
+    if v is None:
+        return ""
+    names = ", ".join(f"{VACANCY_SOURCES.get(k, k) if v['by'] == 'source' else k} {n}" for k, n in v["parts"])
+    scope = ("all regions" if is_en else "усі регіони") if region == "All Regions" else region
+    if is_en:
+        return (f"Behind this chart ({scope}): {v['total']} open postings, {v['with_skills']} of them with skills "
+                f"from the dictionary — {names}. Postings of non-technical roles carry no skills.")
+    return (f"За цим графіком ({scope}): {v['total']} відкритих вакансій, з них {v['with_skills']} з навичками зі "
+            f"словника — {names}. Вакансії нетехнічних посад навичок не дають.")
+
 
 @st.cache_data(ttl=120)
 def load_leader_actions():
@@ -443,9 +472,6 @@ def apply_clean_layout(fig, height=250):
 # ГОЛОВНИЙ ГРАФІК: У СКІЛЬКИ РАЗІВ БІЛЬШЕ, НІЖ У ГРУДНІ 2023 (ui_overview.py)
 # ==========================================
 ui_overview.render_growth(supabase, is_en)
-
-# Відкриті вакансії китайських лабораторій-лідерів (collectors/cn_lab_jobs.py) - окремо від лінії «Фахівці ШІ»
-ui_overview.render_cn_labs(supabase, is_en)
 st.markdown("<br>", unsafe_allow_html=True)
 
 selected_view = st.selectbox(
@@ -485,6 +511,9 @@ if selected_view == L["tab_demand"]:
             width=0.42
         )
         show_chart(fig_skills)
+        note = vacancy_note(load_vacancy_counts(), reg_lookup, selected_track, selected_level, is_en)
+        if note:
+            st.caption(note)
     else:
         st.caption(f"{L['empty_skills']} {reg_lookup}.")
 
