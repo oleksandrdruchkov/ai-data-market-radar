@@ -191,7 +191,7 @@ import ui_overview
 # Те саме стосується модулів проєкту, які імпортує сам ui_overview: без їх перечитування нова
 # функція в metrics/people.py давала ImportError до перезапуску застосунку.
 import sys
-for _name in ("metrics.people", "collectors.arxiv_counts"):
+for _name in ("metrics.people", "metrics.feed", "collectors.arxiv_counts"):
     if _name in sys.modules:
         importlib.reload(sys.modules[_name])
 importlib.reload(ui_overview)
@@ -220,7 +220,9 @@ def load_data():
         df_ar = pd.DataFrame()
 
     try:
-        res_health = supabase.table("v_pipeline_health").select("*").limit(5).execute()
+        # Свіжість джерел з журналу запусків збирачів (sql/001) - для плитки «Стан збору даних»
+        res_health = supabase.table("v_ops_source_freshness").select(
+            "source,is_enabled,freshness,last_status,hours_since_ok,expected_every_hours").execute()
         df_h = pd.DataFrame(res_health.data)
     except Exception:
         df_h = pd.DataFrame()
@@ -305,10 +307,8 @@ is_en = (selected_lang == "EN")
 
 L = {
     "dominant": "DOMINANT CORE" if is_en else "ДОМІНУЮЧЕ ЯДРО",
-    "velocity": "VELOCITY BREAKOUT" if is_en else "ПРОРИВ ШВИДКОСТІ",
     "indexed": "INDEXED SIGNALS" if is_en else "ПРОІНДЕКСОВАНО",
-    "status": "FEED STATUS" if is_en else "СТАТУС ФІДУ",
-    "live": "Live" if is_en else "Наживо",
+    "status": "DATA COLLECTION" if is_en else "СТАН ЗБОРУ ДАНИХ",
     "tab_demand": "🔥 Demand Velocity" if is_en else "🔥 Попит на ринку",
     "tab_future": "🔮 Future Roles (3–6 Mo.)" if is_en else "🔮 Майбутні ролі (3–6 міс.)",
     "empty_skills": "No matching skills found for" if is_en else "Не знайдено навичок для",
@@ -365,19 +365,38 @@ with st.sidebar:
         st.rerun()
 
 total_skills = int(filtered_skills["vacancy_count"].sum()) if not filtered_skills.empty and "vacancy_count" in filtered_skills.columns else 0
-batch_size = df_health["records_ingested"].iloc[0] if not df_health.empty and "records_ingested" in df_health.columns else 0
+
+# Стан збору даних: зведення свіжості джерел (metrics/feed.py), а не напис у коді
+from metrics.feed import feed_status
+feed = feed_status(df_health.to_dict("records") if not df_health.empty else [])
+
+
+def _ago(hours):
+    if hours is None:
+        return "—"
+    if hours < 1:
+        return f"{max(1, round(hours * 60))} min ago" if is_en else f"{max(1, round(hours * 60))} хв тому"
+    if hours < 48:
+        return f"{hours:.0f} h ago" if is_en else f"{hours:.0f} год тому"
+    return f"{hours / 24:.0f} d ago" if is_en else f"{hours / 24:.0f} дн тому"
+
+
+FEED_COLOR = {"ok": "#16a34a", "warn": "#d97706", "bad": "#dc2626", "unknown": "#94a3b8"}[feed["level"]]
+if feed["level"] == "unknown":
+    feed_main, feed_note = ("No data" if is_en else "Немає даних"), ""
+else:
+    feed_main = (f"{feed['fresh']} of {feed['total']} sources fresh" if is_en
+                 else f"Свіжі {feed['fresh']} з {feed['total']} джерел")
+    feed_note = ("last run " if is_en else "останній збір ") + _ago(feed["hours"])
 
 top_skill_name = "N/A"
 top_skill_share = 0
-velocity_skill = "N/A"
 
 if not filtered_skills.empty and "vacancy_count" in filtered_skills.columns:
     agg_temp = filtered_skills.groupby("skill_name")["vacancy_count"].sum().sort_values(ascending=False)
     if not agg_temp.empty and total_skills > 0:
         top_skill_name = agg_temp.index[0]
         top_skill_share = int((agg_temp.iloc[0] / total_skills) * 100)
-        if len(agg_temp) > 1:
-            velocity_skill = agg_temp.index[1]
 
 st.markdown(f"""
 <div class="market-status-bar">
@@ -385,20 +404,24 @@ st.markdown(f"""
     <span class="indicator-title">{L['dominant']} ({reg_lookup})</span>
     <span class="indicator-val">{top_skill_name} <span class="badge-blue">{top_skill_share}%</span></span>
   </div>
-  <div class="market-indicator">
-    <span class="indicator-title">{L['velocity']}</span>
-    <span class="indicator-val">{velocity_skill} <span class="badge-green">⚡ +45% WoW</span></span>
-  </div>
   <div class="market-indicator" style="margin-top:2px;">
     <span class="indicator-title">{L['indexed']}</span>
     <span class="indicator-val">{total_skills:,}</span>
   </div>
   <div class="market-indicator" style="margin-top:2px;">
     <span class="indicator-title">{L['status']}</span>
-    <span class="indicator-val"><span style="color:#16a34a;">●</span> {L['live']} <span style="font-size:0.7rem; color:#64748b; font-weight:500;">(+{batch_size})</span></span>
+    <span class="indicator-val" style="flex-wrap:wrap;"><span style="color:{FEED_COLOR};">●</span> {feed_main} <span style="font-size:0.7rem; color:#64748b; font-weight:500;">{feed_note}</span></span>
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+if feed["problems"]:
+    STATE = {"stale": ("no successful run for too long", "давно немає успішного запуску"),
+             "failing": ("last run failed", "останній запуск упав")}
+    st.caption("⚠️ " + ("Sources with problems: " if is_en else "Джерела з проблемами: ") + "; ".join(
+        f"{src} — {STATE[state][0 if is_en else 1]}" + (f" ({_ago(h)})" if h is not None else "")
+        for src, state, h in feed["problems"]))
+
 
 def apply_clean_layout(fig, height=250):
     fig.update_layout(
