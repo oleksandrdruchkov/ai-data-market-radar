@@ -22,7 +22,7 @@ import json
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable
 
 from .db import Db, utcnow, iso
@@ -64,6 +64,7 @@ class BaseCollector:
     on_conflict: str = "external_id,source"
     collection_method: str = "api"     # api / scrape / file / manual_seed
     tracks_presence: bool = False     # чи закривати факти, яких немає в поточному fetch()
+    stale_after_days: int | None = None   # закривати факти, яких не видно стільки днів (None - ніколи)
     collector_version: str = "1"
     reprocess_limit: int = 20         # скільки відкладених записів добирати за запуск
     allow_empty: bool = False         # чи 0 записів із джерела - це нормально
@@ -98,8 +99,9 @@ class BaseCollector:
         fact["raw_item_id"] = raw_id
         fact["content_hash"] = raw.content_hash
         fact["last_seen_at"] = iso(seen_at)
-        if self.tracks_presence:
-            fact["is_active"] = True
+        if self.tracks_presence or self.stale_after_days:
+            fact["is_active"] = True      # побачений знову факт, закритий раніше, відкривається
+            fact["closed_at"] = None
         # first_seen_at і verified навмисно НЕ надсилаються:
         # first_seen_at ставить БД при першій вставці, verified змінює лише людина.
         for k in ("first_seen_at", "verified"):
@@ -181,6 +183,12 @@ class BaseCollector:
         # 3. Закриваємо зниклі - тільки якщо джерело відповіло і повернуло дані
         if self.tracks_presence and not fetch_error and stats["fetched"] > 0:
             stats["closed"] = self.db.close_stale(self.fact_table, self.fact_source or self.source, started)
+        # 3а. Давно не бачені: джерело не дає повного списку (або дало неповний), тому зникнення
+        # в одному запуску нічого не означає, але факт, якого не видно stale_after_days днів,
+        # активним більше не рахується. Так само лише коли джерело відповіло.
+        if self.stale_after_days and not fetch_error and stats["fetched"] > 0:
+            stats["closed"] += self.db.close_stale(self.fact_table, self.fact_source or self.source,
+                                                   started - timedelta(days=self.stale_after_days))
 
         # 4. Журнал і якість
         llm = self.llm.stats

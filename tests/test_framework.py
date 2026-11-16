@@ -239,6 +239,61 @@ def test_adzuna_keywords_and_reparse_existing(db, monkeypatch):
     assert col.reparse_existing()["updated"] == 0               # повторний запуск нічого не змінює
 
 
+@needs_pg
+def test_vacancy_not_seen_for_30_days_is_closed_and_reopens(db, monkeypatch):
+    """Adzuna не дає повного списку: вакансія, якої не видно понад 30 днів, перестає бути активною;
+    побачена знову - відкривається. Якщо джерело не відповіло, нічого не закривається."""
+    monkeypatch.setenv("ADZUNA_APP_ID", "x")
+    monkeypatch.setenv("ADZUNA_APP_KEY", "y")
+    monkeypatch.setenv("ADZUNA_MARKETS", "us:US:USD")
+    results = [{"id": "301", "title": "Data Engineer", "description": "Python"}]
+
+    class Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"results": results}
+
+    from core import http
+    monkeypatch.setattr(http.requests, "get", lambda *a, **k: Resp())
+
+    def run():
+        return jobs_adzuna.AdzunaJobs(db=db, llm=ScriptedLlm(db, {})).run()
+
+    def row(ext):
+        return db.select("fct_vacancies", eq={"source": "adzuna", "external_id": ext})[0]
+
+    run()
+    results[:] = [{"id": "302", "title": "ML Engineer", "description": "PyTorch"}]
+    run()
+    assert row("us:301")["is_active"]                              # зникла з видачі щойно - ще активна
+
+    db.sql("UPDATE fct_vacancies SET last_seen_at = now() - interval '29 days' WHERE external_id = 'us:301'")
+    assert run()["closed"] == 0 and row("us:301")["is_active"]
+    db.sql("UPDATE fct_vacancies SET last_seen_at = now() - interval '31 days' WHERE external_id = 'us:301'")
+
+    def down(*a, **k):
+        raise RuntimeError("503")
+    monkeypatch.setattr(http.requests, "get", down)                # джерело не відповіло
+    monkeypatch.setattr(http.time, "sleep", lambda s: None)
+    run()
+    assert row("us:301")["is_active"]
+
+    monkeypatch.setattr(http.requests, "get", lambda *a, **k: Resp())
+    stats = run()
+    closed = row("us:301")
+    assert stats["closed"] >= 1 and closed["is_active"] is False and closed["closed_at"]
+    assert row("us:302")["is_active"]
+
+    results[:] = [{"id": "301", "title": "Data Engineer", "description": "Python"}]
+    run()
+    reopened = row("us:301")
+    assert reopened["is_active"] is True and reopened["closed_at"] is None   # знову у видачі - знову активна
+
+    monkeypatch.setenv("VACANCY_STALE_DAYS", "0")                  # правило вимкнено
+    db.sql("UPDATE fct_vacancies SET last_seen_at = now() - interval '90 days' WHERE external_id = 'us:302'")
+    assert run()["closed"] == 0 and row("us:302")["is_active"]
+
+
 SAMPLE_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
  <entry><id>http://arxiv.org/abs/2611.00003v1</id><published>2026-11-05T17:00:00Z</published>
