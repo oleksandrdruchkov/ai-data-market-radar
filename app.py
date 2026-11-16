@@ -488,11 +488,9 @@ def apply_clean_layout(fig, height=250):
     return fig
 
 # ==========================================
-# ГОЛОВНИЙ ГРАФІК: У СКІЛЬКИ РАЗІВ БІЛЬШЕ, НІЖ У ГРУДНІ 2023 (ui_overview.py)
+# ВАКАНСІЇ: НАВИЧКИ ЗА РЕГІОНОМ, НАПРЯМОМ І РІВНЕМ
+# Стоїть одразу під вибором регіону й плитками, бо саме цей графік вони змінюють.
 # ==========================================
-ui_overview.render_growth(supabase, is_en)
-st.markdown("<br>", unsafe_allow_html=True)
-
 selected_view = st.selectbox(
     "Select Analytics View",
     options=[L["tab_demand"], L["tab_future"]],
@@ -589,6 +587,14 @@ else:
             """, unsafe_allow_html=True)
     else:
         st.caption(L["empty_arxiv"])
+
+
+
+# ==========================================
+# ГОЛОВНИЙ ГРАФІК: У СКІЛЬКИ РАЗІВ БІЛЬШЕ, НІЖ У ГРУДНІ 2023 (ui_overview.py)
+# ==========================================
+st.markdown("<br>", unsafe_allow_html=True)
+ui_overview.render_growth(supabase, is_en)
 
 # ==========================================
 # ДОСЛІДЖЕННЯ ШІ: ЗРОСТАННЯ АВТОНОМНОСТІ ПРОТИ ЛЮДСЬКОГО НАГЛЯДУ (ui_overview.py)
