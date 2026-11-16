@@ -173,7 +173,7 @@ def extract_skills(text: str) -> list[Skill]:
 # згадує «大模型» чи «Agent» як продукт компанії, а не як вимогу до фахівця - у попит на навички
 # це не рахується. Перевіряється лише назва посади і раніше за TRACK_RULES.
 NON_TECH = ("产品经理", "产品运营", "运营", "销售", "市场", "营销", "法务", "律师", "财务", "税务", "会计", "审计",
-            "内控", "招聘", "人力", "hrbp", "talent", "采购", "投资", "公关", "品牌", "商务", "行政", "设计师",
+            "内控", "招聘", "人力", "hrbp", "talent partner", "talent acquisition", "采购", "投资", "公关", "品牌", "商务", "行政", "设计师",
             "客户成功", "客服", "pmo", "项目管理", "business development", "marketing", "sales", "recruit",
             "legal", "finance", "investor", "branding", " pr", "pr内容", "gtm", "seo", "合规", "政府", "战略")
 

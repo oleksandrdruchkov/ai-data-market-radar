@@ -60,6 +60,7 @@ def test_non_tech_roles_get_no_skills():
     x = kw.extract("Harness 研发工程师", "熟悉Python和大模型")
     assert x["track"] == "Backend" and {s.name for s in x["_skills"]} == {"Python", "LLM"}
     assert kw.classify_track("AI 安全实习生") == "AI Alignment"
+    assert kw.classify_track("下一代多模态系统-实习生-TOP Talent") == "Machine Learning"   # «Talent» - не кадрова посада
     assert kw.classify_track("专员", "技术类/Technical") == "Backend"
 
 

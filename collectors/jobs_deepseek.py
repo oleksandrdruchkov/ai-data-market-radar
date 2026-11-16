@@ -21,6 +21,7 @@ https://app.mokahr.com/social-recruitment/high-flyer/140576
 запасним варіантом: DEEPSEEK_SEED_FILE=<шлях>.
 
 Змінні: MOKA_ORG="high-flyer"  MOKA_SITE="140576"
+        DEEPSEEK_PARSE="keywords" (за замовчуванням) | "llm" (попередній спосіб, через Gemini)
 Запуск: python -m collectors.jobs_deepseek            (запис у базу)
         python -m collectors.jobs_deepseek --dry-run  (лише друк розібраного, без бази)
 """
@@ -42,6 +43,7 @@ from collectors import _job_keywords as keywords
 from collectors._jobs_common import JobsCollector
 
 SEED_FILE = Path(__file__).parent / "seeds" / "deepseek_manual.json"
+PROMPT_VERSION = "vacancy_zh_v2"      # лише для запасного розбору моделлю (DEEPSEEK_PARSE=llm)
 ORG = os.getenv("MOKA_ORG", "high-flyer")
 SITE = os.getenv("MOKA_SITE", "140576")
 PAGE = f"https://app.mokahr.com/social-recruitment/{ORG}/{SITE}"
@@ -250,7 +252,23 @@ class DeepSeekJobs(JobsCollector):
             )
 
     def parse(self, raw: RawItem) -> dict | None:
+        if os.getenv("DEEPSEEK_PARSE", "keywords") == "llm":
+            return self.parse_llm(raw)
         return cn_vacancy_fact(raw.payload, "DeepSeek")
+
+    def parse_llm(self, raw: RawItem) -> dict | None:
+        """Попередній спосіб (до версії 4): переклад і розбір мовною моделлю. Лишений як запасний
+        (DEEPSEEK_PARSE=llm) і як приклад збирача з моделлю для тестів каркаса."""
+        job = raw.payload
+        res = self.extract(raw, job["title"], job.get("description") or job["title"], translate=True,
+                           prompt_version=PROMPT_VERSION)
+        if res is None:
+            return None
+        x = res.data
+        return {**cn_vacancy_fact(job, "DeepSeek"),
+                "title": x.title_en, "experience_level": x.experience_level, "work_model": x.work_model,
+                "track": x.track, "extraction_method": res.method, "prompt_version": PROMPT_VERSION,
+                "_skills": x.skills}
 
 
 def dry_run() -> None:
