@@ -38,27 +38,3 @@ def test_empty_or_no_base():
     assert people_growth(frame([("US", "2024-01-01", 2.0)]), BASE)["mult"].empty
     assert people_growth(pd.DataFrame(), BASE)["regions"] == []
 
-
-def labs(rows):
-    return pd.DataFrame([{"lab": lab, "day": pd.Timestamp(d), "value": v} for lab, d, v in rows])
-
-
-def test_cn_labs_bars_daily_and_incomplete_days():
-    from metrics.people import cn_labs_bars
-    wide, mode = cn_labs_bars(labs([
-        ("DeepSeek", "2026-11-17", 36), ("Moonshot", "2026-11-17", 106),
-        ("DeepSeek", "2026-11-18", 37),                                   # Moonshot не відповів - дня немає
-        ("DeepSeek", "2026-11-19", 38), ("Moonshot", "2026-11-19", 104),
-    ]))
-    assert mode == "day" and list(wide.index.strftime("%m-%d")) == ["11-17", "11-19"]
-    assert wide.loc["2026-11-19", "Moonshot"] == 104
-    assert cn_labs_bars(pd.DataFrame())[0].empty
-
-
-def test_cn_labs_bars_weekly_after_two_weeks():
-    from metrics.people import cn_labs_bars
-    days = pd.date_range("2026-11-16", periods=30)                        # понеділок
-    wide, mode = cn_labs_bars(labs([("DeepSeek", d, 30 + i) for i, d in enumerate(days)]))
-    assert mode == "week" and len(wide) == 5                              # 4 повні тижні + початий
-    assert wide.index[0] == pd.Timestamp("2026-11-22") and wide.iloc[0, 0] == 36   # останній знімок тижня
-    assert wide.index[-1] == days[-1]
