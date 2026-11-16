@@ -183,7 +183,12 @@ def init_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
+import importlib
 import ui_overview
+# Streamlit перечитує app.py при кожному відкритті сторінки, а імпортований модуль тримає в пам'яті
+# з моменту запуску. Без цього після оновлення коду графіки з ui_overview.py лишались старими
+# до ручного перезапуску застосунку.
+importlib.reload(ui_overview)
 from ui_overview import show_chart
 
 # Сторінка перевірки записів кола лідерів (вхід за паролем): ?review=1
