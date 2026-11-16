@@ -28,7 +28,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from collectors.arxiv_counts import DIRECTIONS, GROUPS
-from metrics.people import people_growth
+from metrics.people import people_growth, cn_labs_bars
 
 BASE_MONTH = pd.Timestamp("2023-12-01")
 BASE_QUARTER_END = pd.Timestamp("2023-12-31")
@@ -340,6 +340,104 @@ def render_growth(sb, is_en: bool) -> None:
                        "**Гроші** — квартальні капвитрати Amazon, Alphabet, Meta, Microsoft (уся компанія, не лише ШІ). "
                        "Заливка: частки надходжень кварталу від власного заробітку, чистого боргу й продажу акцій, "
                        "застосовані до капвитрат. OpenAI, Anthropic, xAI не звітують до SEC. Джерело: SEC EDGAR."))
+
+
+# ---------------------------------------------------------------- вакансії китайських лабораторій
+
+CN_LAB_COLORS = {"DeepSeek": "#185FA5", "Moonshot": "#7F77DD", "Zhipu": "#1D9E75", "MiniMax": "#EF9F27"}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_cn_lab_series(_sb) -> tuple[pd.DataFrame | None, str | None]:
+    """Усі знімки cn_lab_jobs_* (collectors/cn_lab_jobs.py): колонки lab, day, value."""
+    try:
+        rows, off = [], 0
+        while True:
+            page = (_sb.table("fct_metric_values").select("metric_id,period_start,value")
+                    .like("metric_id", "cn_lab_jobs_%").eq("region", "CN")
+                    .order("period_start").range(off, off + 999).execute().data or [])
+            rows += page
+            if len(page) < 1000:
+                break
+            off += 1000
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return pd.DataFrame(columns=["lab", "day", "value"]), None
+        key = df["metric_id"].str.removeprefix("cn_lab_jobs_")
+        df["lab"] = key.map(lambda k: CN_LAB_NAMES.get(k, k.title()))
+        df["day"] = pd.to_datetime(df["period_start"])
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        return df[["lab", "day", "value"]].dropna(), None
+    except Exception as ex:
+        return None, str(ex)[:300]
+
+
+def render_cn_labs(sb, is_en: bool) -> None:
+    st.markdown("<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin:6px 0 2px;'>"
+                + _t(is_en, "Open job postings at leading Chinese labs",
+                     "Відкриті вакансії китайських лабораторій-лідерів")
+                + "</div>", unsafe_allow_html=True)
+    df, err = load_cn_lab_series(sb)
+    if err:
+        st.caption(f"⚠️ {err}")
+        return
+    wide, mode = cn_labs_bars(df)
+    if wide.empty:
+        st.info(_t(is_en, "Collection has just started: the first point appears after the next daily run.",
+                   "Збір щойно почався: перша точка з'явиться після наступного щоденного запуску."))
+        return
+
+    labs = sorted(wide.columns, key=lambda c: -wide[c].iloc[-1])
+    x = [d.strftime("%d.%m") for d in wide.index]
+    total = wide.sum(axis=1)
+    fig = go.Figure()
+    for lab in labs:
+        fig.add_trace(go.Bar(
+            x=x, y=wide[lab], name=lab, marker_color=CN_LAB_COLORS.get(lab, "#94a3b8"),
+            marker_line=dict(color="#ffffff", width=0.5), showlegend=False,
+            text=[f"{v:.0f}" for v in wide[lab]] if len(wide) <= 6 else None,
+            textposition="inside", insidetextanchor="middle", textfont=dict(size=11),
+            hovertemplate=f"<b>{lab}</b>: %{{y:.0f}}<br>%{{x}}<extra></extra>"))
+    for xi, t in zip(x, total):
+        fig.add_annotation(x=xi, y=t, yshift=10, showarrow=False, text=f"<b>{t:.0f}</b>",
+                           font=dict(size=11, color="#0f172a"))
+    fig.update_layout(barmode="stack", bargap=0.35 if len(wide) > 1 else 0.6, height=340,
+                      paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
+                      margin=dict(l=40, r=8, t=24, b=36), uniformtext=dict(minsize=9, mode="hide"),
+                      xaxis=dict(type="category", tickfont=dict(size=10), automargin=False),
+                      font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
+                      showlegend=False,
+                      yaxis=dict(gridcolor="#f1f5f9", automargin=False, range=[0, float(total.max()) * 1.14]))
+    show_chart(fig)
+
+    sq = "display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 8px;vertical-align:-1px;"
+    last, first = wide.iloc[-1], wide.iloc[0]
+
+    def _delta(now: float, was: float) -> str:
+        d = now - was
+        return "" if len(wide) < 2 or d == 0 else f" ({'+' if d > 0 else '−'}{abs(d):.0f})"
+
+    items = "".join(f"<span style='white-space:nowrap'><span style='{sq}background:{CN_LAB_COLORS.get(lab, '#94a3b8')}'></span>"
+                    f"{lab} <b>{last[lab]:.0f}</b>{_delta(last[lab], first[lab])}</span> " for lab in labs)
+    st.markdown(f"<div style='font-size:0.72rem;color:#475569;line-height:1.7;margin:0 0 4px;'>"
+                f"<b>{wide.index[-1]:%d.%m.%Y}: {total.iloc[-1]:.0f}{_delta(total.iloc[-1], total.iloc[0])}</b>{items}</div>",
+                unsafe_allow_html=True)
+    since = _t(is_en, f" In brackets — change since {wide.index[0]:%d.%m.%Y}.",
+               f" У дужках — зміна від {wide.index[0]:%d.%m.%Y}.") if len(wide) > 1 else ""
+    step = _t(is_en, "One bar per day." if mode == "day" else "One bar per week (last snapshot of the week).",
+              "Один стовпчик — один день." if mode == "day" else "Один стовпчик — тиждень (останній знімок тижня).")
+    st.caption(_t(
+        is_en,
+        f"Number of postings open on the labs' own career pages on that date (all roles; MiniMax includes internships). "
+        f"{step}{since} It is a count of the companies' postings, not a market share, so it is not part of the "
+        f"“AI specialists” line. History starts with the first run; days when a lab's page did not answer are skipped. "
+        f"Alibaba (Qwen) is not included: its portal covers the whole corporation. "
+        f"Sources: career pages on MokaHR (DeepSeek, Moonshot, Zhipu) and Feishu (MiniMax).",
+        f"Кількість вакансій, відкритих на сторінках найму самих лабораторій на цю дату (усі посади; у MiniMax разом "
+        f"зі стажуваннями). {step}{since} Це кількість оголошень компаній, а не частка ринку, тому в лінію "
+        f"«Фахівці ШІ» вона не входить. Історія починається з першого запуску; дні, коли сторінка лабораторії не "
+        f"відповіла, пропущено. Alibaba (Qwen) не входить: її портал охоплює всю корпорацію. "
+        f"Джерела: сторінки найму на MokaHR (DeepSeek, Moonshot, Zhipu) і Feishu (MiniMax)."))
 
 
 # ---------------------------------------------------------------- дослідження: автономність проти нагляду

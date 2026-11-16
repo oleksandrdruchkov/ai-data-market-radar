@@ -46,3 +46,22 @@ def people_growth(monthly: pd.DataFrame, base_month: pd.Timestamp) -> dict:
     last = ratio.iloc[-1].dropna()
     return {"mult": mult, "low": ratio.min(axis=1), "high": ratio.max(axis=1), "n": n[n > 0],
             "regions": regions, "latest": {r: float(v) for r, v in last.items()}}
+
+
+def cn_labs_bars(rows: pd.DataFrame, max_daily: int = 14, max_bars: int = 12) -> tuple[pd.DataFrame, str]:
+    """Відкриті вакансії китайських лабораторій для стовпчиків у часі.
+
+    rows: колонки lab, day, value (знімок на дату). Повертає (таблиця: рядок - період, колонка -
+    лабораторія; режим «day» | «week»).
+    Поки дат не більше max_daily - стовпчик на кожну дату; далі - на тиждень (останній знімок тижня),
+    і лише останні max_bars тижнів, щоб графік читався на телефоні.
+    У таблицю входять лише дати, коли відповіли всі лабораторії, що є в даних: стовпчик без однієї
+    лабораторії виглядав би як падіння найму."""
+    if rows is None or rows.empty:
+        return pd.DataFrame(), "day"
+    wide = rows.pivot_table(index="day", columns="lab", values="value", aggfunc="last").sort_index()
+    wide = wide.dropna(how="any")
+    if wide.empty or len(wide) <= max_daily:
+        return wide, "day"
+    weekly = wide.groupby(wide.index.to_period("W-SUN")).tail(1)
+    return weekly.tail(max_bars), "week"

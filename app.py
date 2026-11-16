@@ -412,6 +412,9 @@ def apply_clean_layout(fig, height=250):
 # ГОЛОВНИЙ ГРАФІК: У СКІЛЬКИ РАЗІВ БІЛЬШЕ, НІЖ У ГРУДНІ 2023 (ui_overview.py)
 # ==========================================
 ui_overview.render_growth(supabase, is_en)
+
+# Відкриті вакансії китайських лабораторій-лідерів (collectors/cn_lab_jobs.py) - окремо від лінії «Фахівці ШІ»
+ui_overview.render_cn_labs(supabase, is_en)
 st.markdown("<br>", unsafe_allow_html=True)
 
 selected_view = st.selectbox(
