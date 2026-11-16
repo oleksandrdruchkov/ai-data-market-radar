@@ -51,9 +51,15 @@ jobs:
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
         run: python -m collectors.jobs_adzuna
 
-      - name: Jobs - DeepSeek (APAC, сторінка MokaHR)
+      # Вакансії китайських лабораторій розбираються ключовими словами (collectors/_job_keywords.py), без Gemini.
+      - name: Jobs - DeepSeek (China, сторінка MokaHR)
         if: ${{ !cancelled() }}
         run: python -m collectors.jobs_deepseek
+
+      - name: Jobs - Moonshot, Zhipu, MiniMax (China, сторінки MokaHR і Feishu; sql/030)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: python -m collectors.jobs_cn_labs
 
       - name: ArXiv research signals
         if: ${{ !cancelled() }}

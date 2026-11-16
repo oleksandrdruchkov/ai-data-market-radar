@@ -65,6 +65,9 @@ def db():
 @pytest.fixture(autouse=True)
 def no_exit(monkeypatch):
     monkeypatch.setenv("RADAR_FAIL_ON_CRITICAL", "0")
+    # Тести каркаса перевіряють роботу з мовною моделлю (кеш, каскад, відкладення), тому DeepSeek
+    # тут розбирається попереднім способом; у роботі він розбирається ключовими словами.
+    monkeypatch.setenv("DEEPSEEK_PARSE", "llm")
 
 
 def seed(tmp_path, monkeypatch, ids):
