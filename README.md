@@ -155,7 +155,7 @@ docs/         technical notes and archive
 | METR time horizons, Epoch Capabilities Index | Epoch AI | CC BY 4.0 |
 | AI job postings share | Indeed Hiring Lab | CC BY 4.0 |
 | Open postings at Chinese labs | career pages of DeepSeek, Moonshot, Zhipu (MokaHR), MiniMax (Feishu) | public pages; counter and posting texts. Skills are extracted by keywords, without a language model; the region in the filter is China, separate from APAC |
-| Job postings and counts | Adzuna API | API terms |
+| Job postings and counts | Adzuna API | API terms. Skills, track, level and work format are extracted by keywords, without a language model — the same way as postings of the Chinese labs |
 | Capital expenditure, filings | SEC EDGAR | public data |
 | Rates and spreads | FRED (St. Louis Fed) | per series; ICE/Moody's shown as scores only |
 | Paper counts | arXiv API | arXiv API terms |

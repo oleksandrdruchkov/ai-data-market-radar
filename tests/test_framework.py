@@ -234,7 +234,7 @@ def test_adzuna_keywords_and_reparse_existing(db, monkeypatch):
     assert res["updated"] + res["no_text"] == len(stale) and res["updated"] >= 1
     after = db.select("fct_vacancies", eq={"id": old["id"]})[0]
     assert after["extraction_method"] == kw.METHOD and after["track"] == "Machine Learning"
-    assert after["work_model"] == "Remote" and skills(old["id"]) == {"PyTorch", "Kubernetes"}
+    assert after["work_model"] == "Remote" and skills(old["id"]) == {"PyTorch", "Kubernetes", "Machine Learning"}
     assert after["last_seen_at"] == before["last_seen_at"] and after["first_seen_at"] == before["first_seen_at"]
     assert col.reparse_existing()["updated"] == 0               # повторний запуск нічого не змінює
 

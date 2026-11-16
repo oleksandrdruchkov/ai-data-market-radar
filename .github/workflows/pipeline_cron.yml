@@ -44,7 +44,9 @@ jobs:
       # ---------- Збирачі на новому каркасі (core/) ----------
       # Кожен крок незалежний: збій одного (червоний) не зупиняє наступні.
 
-      - name: Jobs - Adzuna (US / Europe)
+      # Розбір ключовими словами (collectors/_job_keywords.py), без Gemini; після збору раніше зібрані
+      # вакансії перерозбираються тим самим словником.
+      - name: Jobs - Adzuna (US / Europe / APAC)
         if: ${{ !cancelled() }}
         env:
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
