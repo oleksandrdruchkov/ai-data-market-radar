@@ -124,7 +124,10 @@ class JobsCollector(BaseCollector):
         if not rows:
             raise RuntimeError("upsert вакансії не повернув рядок")
         vacancy_id = rows[0].get("vacancy_id") or rows[0].get("id")
+        self.write_skills(vacancy_id, skills)
 
+    def write_skills(self, vacancy_id: int, skills) -> None:
+        """Навички вакансії = рівно цей список (зайві зв'язки прибираються)."""
         skill_ids = sorted({self.resolve_skill_id(s.name, s.category) for s in skills})
         if skill_ids:
             self.db.upsert("bridge_vacancy_skills",

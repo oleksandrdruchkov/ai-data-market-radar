@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "deepseek - сторінка DeepSeek на MokaHR; cn_careers - пошук сторінок найму інших китайських лабораторій"
+        description: "deepseek - сторінка DeepSeek на MokaHR; cn_careers - сторінки найму інших китайських лабораторій; adzuna - пробний розбір Adzuna"
         type: choice
         default: deepseek
-        options: [deepseek, cn_careers]
+        options: [deepseek, cn_careers, adzuna]
 
 jobs:
   probe:
@@ -33,12 +33,18 @@ jobs:
       - name: Dry run - відкриті вакансії китайських лабораторій (без запису)
         if: ${{ !cancelled() && inputs.target == 'cn_careers' }}
         run: python -m collectors.cn_lab_jobs --dry-run
+      - name: Dry run - Adzuna з розбором ключовими словами (без запису)
+        if: ${{ !cancelled() && inputs.target == 'adzuna' }}
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+        run: python -m collectors.jobs_adzuna --dry-run
       - name: Dry run - вакансії Moonshot, Zhipu, MiniMax з розбором ключовими словами (без запису)
         if: ${{ !cancelled() && inputs.target == 'cn_careers' }}
         run: python -m collectors.jobs_cn_labs --dry-run
       - name: Probe MokaHR
-        if: ${{ inputs.target != 'cn_careers' }}
+        if: ${{ inputs.target == 'deepseek' }}
         run: python -m tools.probe_mokahr
       - name: Dry run - збирач DeepSeek (без запису)
-        if: ${{ !cancelled() && inputs.target != 'cn_careers' }}
+        if: ${{ !cancelled() && inputs.target == 'deepseek' }}
         run: python -m collectors.jobs_deepseek --dry-run

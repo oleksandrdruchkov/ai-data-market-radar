@@ -172,6 +172,7 @@ def test_adzuna(db, monkeypatch):
 
     from core import http
     monkeypatch.setattr(http.requests, "get", lambda *a, **k: Resp())     # запити йдуть через core.http
+    monkeypatch.setenv("ADZUNA_PARSE", "llm")                   # запасний спосіб: розбір моделлю
     good = {**GOOD, "track": "Data Engineering", "experience_level": "Not Specified",
             "skills": [{"name": "Python", "category": "Language"}]}
     stats = jobs_adzuna.AdzunaJobs(db=db, llm=ScriptedLlm(db, {"m1": good})).run()
@@ -182,6 +183,60 @@ def test_adzuna(db, monkeypatch):
     r = rows[0]
     assert r["event_date"] == "2026-11-06" and r["salary_is_predicted"] is True
     assert r["source_url"].endswith("/111") and r["first_seen_at"].startswith("2026-10-01") and r["event_date"] == "2026-11-06"
+
+
+@needs_pg
+def test_adzuna_keywords_and_reparse_existing(db, monkeypatch):
+    """Adzuna розбирається ключовими словами без моделі; старі вакансії перерозбираються зі збереженого тексту."""
+    from collectors import _job_keywords as kw
+    monkeypatch.setenv("ADZUNA_APP_ID", "x")
+    monkeypatch.setenv("ADZUNA_APP_KEY", "y")
+    monkeypatch.setenv("ADZUNA_MARKETS", "us:US:USD")
+
+    class Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"results": [
+                {"id": "222", "title": "Senior Data Engineer", "description": "Python, PySpark and Databricks. Hybrid.",
+                 "company": {"display_name": "Acme"}, "location": {"display_name": "NYC"},
+                 "created": "2026-11-06T10:00:00Z", "redirect_url": "https://www.adzuna.com/details/222"}]}
+
+    from core import http
+    monkeypatch.setattr(http.requests, "get", lambda *a, **k: Resp())
+    llm = ScriptedLlm(db, {})                                   # усі моделі недоступні - і не потрібні
+    col = jobs_adzuna.AdzunaJobs(db=db, llm=llm)
+    stats = col.run()
+    assert stats["seen"] == 1 and stats["deferred"] == 0 and llm.prompts == []
+    new = db.select("fct_vacancies", eq={"source": "adzuna", "external_id": "us:222"})[0]
+    assert new["extraction_method"] == kw.METHOD and new["track"] == "Data Engineering"
+    assert new["experience_level"] == "Senior" and new["work_model"] == "Hybrid"
+
+    def skills(vacancy_id):
+        ids = [b["skill_id"] for b in db.select("bridge_vacancy_skills", eq={"vacancy_id": vacancy_id})]
+        return {s["canonical_name"] for s in db.select("dim_skills", in_={"skill_id": ids})} if ids else set()
+
+    assert skills(new["id"]) == {"Python", "PySpark", "Databricks"}
+
+    # стара вакансія, розібрана іншим способом: текст лежить у raw_items
+    old = db.select("fct_vacancies", eq={"source": "adzuna", "external_id": "us:111"})[0]
+    assert old["extraction_method"] != kw.METHOD
+    raw_id = db.insert("raw_items", {"source": "adzuna", "external_id": "us:111-old", "content_hash": "h",
+                                     "status": "legacy",
+                                     "payload": {"title": "Machine Learning Engineer",
+                                                 "description": "PyTorch and Kubernetes, fully remote"}})[0]["raw_id"]
+    db.update("fct_vacancies", {"raw_item_id": raw_id, "is_active": True}, eq={"id": old["id"]})
+    before = db.select("fct_vacancies", eq={"id": old["id"]})[0]
+    stale = [r for r in db.select("fct_vacancies", eq={"source": "adzuna", "is_active": True})
+             if r["extraction_method"] != kw.METHOD]
+    res = col.reparse_existing()
+    # нову вакансію не чіпає - вона вже за словником; старі - лише ті, що мають збережений текст
+    assert res["updated"] + res["no_text"] == len(stale) and res["updated"] >= 1
+    after = db.select("fct_vacancies", eq={"id": old["id"]})[0]
+    assert after["extraction_method"] == kw.METHOD and after["track"] == "Machine Learning"
+    assert after["work_model"] == "Remote" and skills(old["id"]) == {"PyTorch", "Kubernetes"}
+    assert after["last_seen_at"] == before["last_seen_at"] and after["first_seen_at"] == before["first_seen_at"]
+    assert col.reparse_existing()["updated"] == 0               # повторний запуск нічого не змінює
 
 
 SAMPLE_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>

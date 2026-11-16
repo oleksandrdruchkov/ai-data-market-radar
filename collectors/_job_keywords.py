@@ -2,8 +2,8 @@
 collectors/_job_keywords.py
 Розбір вакансії ключовими словами, без мовної моделі.
 
-Навіщо: вакансії китайських лабораторій (кілька сотень оголошень) розбираються однаково,
-відтворювано і без витрат квоти Gemini. Що слово означає - записано тут, у словнику; та сама
+Навіщо: усі вакансії - китайських лабораторій і з Adzuna (США, Європа, Сингапур, Індія) -
+розбираються однаково, відтворювано і без витрат квоти Gemini. Що слово означає - записано тут, у словнику; та сама
 вакансія завжди дає той самий результат.
 
 Що визначається:
@@ -11,8 +11,10 @@ collectors/_job_keywords.py
             лише для технічних посад: вакансія з напрямом Other навичок не отримує
   напрям    track - за назвою посади й категорією на сторінці найму
   рівень    experience_level - за словами в назві посади («高级», «资深», «实习», Senior ...)
-Чого немає (на відміну від розбору моделлю): перекладу назви посади і формату роботи
-(work_model завжди "Not Specified"). Навичка, якої немає у словнику, не потрапить у статистику -
+  формат    work_model - за словами remote / hybrid / on-site у назві чи описі
+Латинські слова в правилах шукаються як цілі слова («intern» не збігається з «international»,
+«sales» - із «Salesforce»); китайські - як частина рядка.
+Чого немає (на відміну від розбору моделлю): перекладу назви посади. Навичка, якої немає у словнику, не потрапить у статистику -
 словник доповнюється тут, з підвищенням KEYWORDS_VERSION.
 
 Чисті функції, без мережі й бази.
@@ -24,7 +26,7 @@ import re
 
 from collectors._jobs_common import Skill
 
-KEYWORDS_VERSION = "kw_v1"
+KEYWORDS_VERSION = "kw_v2"      # v2: англомовні вакансії (Adzuna): словник стеку даних, правила за цілими словами
 METHOD = f"keywords:{KEYWORDS_VERSION}"
 
 # (канонічна назва, категорія, латинські варіанти, китайські варіанти)
@@ -42,6 +44,7 @@ SKILLS: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = [
     ("Scala", "Language", ("Scala",), ()),
     ("Shell", "Language", ("Shell", "Bash"), ()),
     ("Kotlin", "Language", ("Kotlin",), ()),
+    ("C#", "Language", ("C#", ".NET"), ()),
     ("Swift", "Language", ("Swift",), ()),
     # фреймворки глибокого навчання
     ("PyTorch", "Deep Learning Framework", ("PyTorch", "Torch"), ()),
@@ -95,20 +98,50 @@ SKILLS: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = [
     ("Prompt Engineering", "Applied AI", ("Prompt Engineering", "Prompt"), ("提示词",)),
     ("Model Context Protocol", "Applied AI", ("MCP",), ()),
     ("LangChain", "Applied AI", ("LangChain",), ()),
+    ("Generative AI", "Applied AI", ("Generative AI", "GenAI", "Gen AI"), ("生成式",)),
+    ("MLOps", "Applied AI", ("MLOps", "MLflow", "Kubeflow", "SageMaker", "Vertex AI"), ()),
+    ("Hugging Face", "Applied AI", ("Hugging Face", "HuggingFace"), ()),
     ("LlamaIndex", "Applied AI", ("LlamaIndex",), ()),
     ("Vector DB", "Applied AI", ("Milvus", "Faiss", "Vector Database"), ("向量数据库", "向量检索")),
     ("AI Alignment", "Applied AI", ("Alignment", "AI Safety", "Red Teaming", "Red Team"), ("模型安全", "红队", "对齐研究")),
     ("Synthetic Data", "Applied AI", ("Synthetic Data",), ("合成数据", "数据合成")),
     # платформи даних і бази
-    ("Spark", "Data Platform", ("Spark", "PySpark"), ()),
+    ("Spark", "Data Platform", ("Spark", "Apache Spark"), ()),
+    ("PySpark", "Data Platform", ("PySpark",), ()),
+    ("Databricks", "Data Platform", ("Databricks",), ()),
+    ("Snowflake", "Data Platform", ("Snowflake",), ()),
+    ("BigQuery", "Data Platform", ("BigQuery",), ()),
+    ("Redshift", "Data Platform", ("Redshift",), ()),
+    ("Azure Synapse", "Data Platform", ("Synapse",), ()),
+    ("Microsoft Fabric", "Data Platform", ("Microsoft Fabric", "MS Fabric"), ()),
+    ("dbt", "Data Platform", ("dbt",), ()),
+    ("Apache Iceberg", "Data Platform", ("Iceberg",), ()),
+    ("Delta Lake", "Data Platform", ("Delta Lake",), ()),
+    ("Dagster", "Data Platform", ("Dagster",), ()),
+    ("Prefect", "Data Platform", ("Prefect",), ()),
+    ("Fivetran", "Data Platform", ("Fivetran",), ()),
+    ("Informatica", "Data Platform", ("Informatica",), ()),
+    ("SSIS", "Data Platform", ("SSIS",), ()),
+    ("AWS Glue", "Data Platform", ("AWS Glue", "Glue"), ()),
+    ("Azure Data Factory", "Data Platform", ("Azure Data Factory", "Data Factory", "ADF"), ()),
+    ("Data Warehousing", "Data Platform", ("Data Warehouse", "Data Warehousing", "Data Warehouses"), ("数据仓库", "数仓")),
+    ("Data Modeling", "Data Platform", ("Data Modeling", "Data Modelling"), ("数据建模",)),
+    ("Data Pipelines", "Data Platform", ("Data Pipeline", "Data Pipelines"), ("数据管道", "数据流水线")),
+    ("Data Lake", "Data Platform", ("Data Lake", "Lakehouse", "Data Lakehouse"), ("数据湖",)),
     ("Flink", "Data Platform", ("Flink",), ()),
     ("Hadoop", "Data Platform", ("Hadoop", "HDFS"), ()),
     ("Hive", "Data Platform", ("Hive",), ()),
     ("Apache Kafka", "Data Platform", ("Kafka",), ()),
     ("Airflow", "Data Platform", ("Airflow",), ()),
-    ("ETL", "Data Platform", ("ETL",), ("数据仓库", "数仓")),
+    ("ETL", "Data Platform", ("ETL", "ELT"), ()),
     ("Ray", "Data Platform", ("Ray",), ()),
     ("MySQL", "Database", ("MySQL",), ()),
+    ("SQL Server", "Database", ("SQL Server", "MSSQL", "T-SQL"), ()),
+    ("Oracle", "Database", ("Oracle",), ()),
+    ("NoSQL", "Database", ("NoSQL",), ()),
+    ("DynamoDB", "Database", ("DynamoDB",), ()),
+    ("Cassandra", "Database", ("Cassandra",), ()),
+    ("DuckDB", "Database", ("DuckDB",), ()),
     ("PostgreSQL", "Database", ("PostgreSQL", "Postgres"), ()),
     ("Redis", "Database", ("Redis",), ()),
     ("MongoDB", "Database", ("MongoDB",), ()),
@@ -130,6 +163,19 @@ SKILLS: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = [
     ("Distributed Systems", "DevOps", ("Distributed Systems",), ("分布式系统",)),
     # інструменти
     ("Git", "Tool", ("Git",), ()),
+    ("CI/CD", "DevOps", ("CI/CD", "CICD", "Jenkins", "GitHub Actions", "GitLab CI"), ("持续集成",)),
+    ("Power BI", "Tool", ("Power BI", "PowerBI"), ()),
+    ("Tableau", "Tool", ("Tableau",), ()),
+    ("Looker", "Tool", ("Looker",), ()),
+    ("Pandas", "Tool", ("Pandas",), ()),
+    ("NumPy", "Tool", ("NumPy",), ()),
+    ("scikit-learn", "Tool", ("scikit-learn", "sklearn"), ()),
+    ("SAS", "Tool", ("SAS",), ()),
+    ("FastAPI", "Tool", ("FastAPI",), ()),
+    ("Django", "Tool", ("Django",), ()),
+    ("Flask", "Tool", ("Flask",), ()),
+    ("REST API", "Tool", ("REST API", "REST APIs", "RESTful"), ()),
+    ("GraphQL", "Tool", ("GraphQL",), ()),
     ("gRPC", "Tool", ("gRPC",), ()),
     ("React", "Tool", ("React",), ()),
     ("Vue", "Tool", ("Vue",), ()),
@@ -141,6 +187,7 @@ SKILLS: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = [
 
 # Короткі або схожі на звичайні слова назви шукаються з урахуванням регістру («Go», а не «go»).
 CASE_SENSITIVE = {"Go", "Ray", "Git", "Swift", "Rust", "Shell", "Bash", "Spark", "Hive", "Vue", "React",
+                  "Glue", "Oracle", "Looker", "Prefect", "Flask", "Synapse", "Iceberg", "Snowflake", "dbt",
                   "Agent", "Agents", "Prompt", "Triton", "Torch", "Scala", "Java", "Alignment", "Benchmark",
                   "Diffusion", "Distillation", "Quantization", "Transformer", "Transformers"}
 
@@ -153,8 +200,9 @@ def _latin_re(term: str) -> re.Pattern:
     """Ціле слово: поруч не може бути латинської літери чи цифри (китайський ієрогліф - може).
     «Java» не збігається з «JavaScript», «C++» шукається як є."""
     flags = 0 if (term in CASE_SENSITIVE or (len(term) <= 4 and term.isupper())) else re.I
-    tail = rf"(?![{_EDGE}+#])" if not term.endswith("+") else rf"(?![{_EDGE}])"
-    return re.compile(rf"(?<![{_EDGE}.\-]){re.escape(term)}{tail}", flags)
+    tail = rf"(?![{_EDGE}+#])" if not term.endswith(("+", "#")) else rf"(?![{_EDGE}])"
+    head = rf"(?<![{_EDGE}.\-])" if not term.startswith(".") else rf"(?<![{_EDGE}])"
+    return re.compile(rf"{head}{re.escape(term)}{tail}", flags)
 
 
 _COMPILED = [(name, cat, [_latin_re(t) for t in latin], zh) for name, cat, latin, zh in SKILLS]
@@ -169,47 +217,83 @@ def extract_skills(text: str) -> list[Skill]:
     return found
 
 
+# Слово правила: латинське - ціле слово, китайське - частина рядка.
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _word_re(words: tuple[str, ...]) -> re.Pattern:
+    parts = [re.escape(w) if _CJK.search(w) else rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])" for w in words]
+    return re.compile("|".join(parts))
+
+
 # Нетехнічні посади: напрям Other і без навичок. Опис такої вакансії (юрист, продажі, маркетинг)
 # згадує «大模型» чи «Agent» як продукт компанії, а не як вимогу до фахівця - у попит на навички
 # це не рахується. Перевіряється лише назва посади і раніше за TRACK_RULES.
-NON_TECH = ("产品经理", "产品运营", "运营", "销售", "市场", "营销", "法务", "律师", "财务", "税务", "会计", "审计",
-            "内控", "招聘", "人力", "hrbp", "talent partner", "talent acquisition", "采购", "投资", "公关", "品牌", "商务", "行政", "设计师",
-            "客户成功", "客服", "pmo", "项目管理", "business development", "marketing", "sales", "recruit",
-            "legal", "finance", "investor", "branding", " pr", "pr内容", "gtm", "seo", "合规", "政府", "战略")
+# Якщо в назві є технічна роль (TECH_ROLE), посада технічна попри слово зі списку:
+# «Data Engineer - Finance» чи «Sales Engineer» - інженери.
+NON_TECH = _word_re((
+    "产品经理", "产品运营", "运营", "销售", "市场", "营销", "法务", "律师", "财务", "税务", "会计", "审计",
+    "内控", "招聘", "人力", "采购", "投资", "公关", "品牌", "商务", "行政", "设计师", "客户成功", "客服",
+    "项目管理", "合规", "政府", "战略", "pr内容",
+    "hrbp", "hr", "talent partner", "talent acquisition", "recruiter", "recruiting", "recruitment", "pmo",
+    "business development", "marketing", "sales", "legal", "finance", "investor", "branding", "pr", "gtm",
+    "seo", "accountant", "account manager", "account executive", "customer success", "product manager",
+    "project manager", "program manager", "procurement", "paralegal", "copywriter"))
+TECH_ROLE = _word_re((
+    "engineer", "engineers", "engineering", "developer", "scientist", "architect", "programmer", "sre",
+    "devops", "analyst", "工程师", "研发", "算法", "开发", "架构师", "程序", "研究员"))
 
-# Напрям: перший рядок, слова якого є в назві посади або категорії. Порядок має значення.
-TRACK_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("AI Alignment", ("alignment", "safety", "red team", "对齐", "模型安全", "红队", "安全研究", "ai 安全", "ai安全")),
-    ("Machine Learning", ("算法", "模型", "深度学习", "机器学习", "研究员", "研究科学家", "训练", "推理", "多模态",
-                          "llm", "machine learning", "research", "nlp", "aigc", "强化学习", "智能体", "agent",
-                          "语音", "视觉", "评测", "prompt", "提示词")),
-    ("Data Engineering", ("数据工程", "数据平台", "数据开发", "数仓", "数据仓库", "大数据", "存储", "etl",
-                          "data engineer", "data platform", "数据采集", "爬虫", "数据标注")),
-    ("Analytics Engineering", ("数据分析", "分析师", "data analyst", "商业分析", "数据科学", "data scien")),
-    ("Backend", ("后端", "服务端", "backend", "后台", "架构", "基础架构", "infra", "sre", "运维", "分布式", "系统",
-                 "平台", "全栈", "前端", "客户端", "开发工程师", "软件工程师", "engineer", "测试", "网络", "编译",
-                 "gpu", "集群", "高性能", "安全工程", "研发", "工程师", "开发", "developer", "程序", "技术类",
-                 "逆向", "安全")),
-]
+# Напрям: перший рядок, слова якого є в назві посади або категорії. Порядок має значення:
+# інженерія даних і аналітика - раніше за машинне навчання («AI Data Engineer» - інженер даних).
+TRACK_RULES: list[tuple[str, re.Pattern]] = [(t, _word_re(w)) for t, w in [
+    ("AI Alignment", ("alignment", "ai safety", "safety researcher", "red team", "red teaming",
+                      "对齐", "模型安全", "红队", "安全研究", "ai 安全", "ai安全")),
+    ("Data Engineering", ("data engineer", "data engineers", "data engineering", "data platform", "big data",
+                          "etl", "elt", "data pipeline", "data pipelines", "data warehouse", "databricks",
+                          "snowflake", "dataops", "data architect", "data infrastructure",
+                          "数据工程", "数据平台", "数据开发", "数仓", "数据仓库", "大数据", "存储", "数据采集", "爬虫",
+                          "数据标注")),
+    ("Analytics Engineering", ("analytics engineer", "analytics", "analyst", "business intelligence", "bi",
+                               "power bi", "tableau", "reporting", "数据分析", "分析师", "商业分析")),
+    ("Machine Learning", ("machine learning", "ml", "mlops", "ai", "artificial intelligence", "deep learning",
+                          "genai", "generative", "llm", "llms", "nlp", "aigc", "data scientist", "data science",
+                          "research", "researcher", "applied scientist", "computer vision", "agent", "agents",
+                          "prompt",
+                          "算法", "模型", "深度学习", "机器学习", "研究员", "研究科学家", "训练", "推理", "多模态",
+                          "强化学习", "智能体", "语音", "视觉", "评测", "提示词", "数据科学")),
+    ("Backend", ("backend", "back-end", "back end", "software engineer", "software developer", "full stack",
+                 "fullstack", "full-stack", "developer", "engineer", "engineering", "infra", "infrastructure",
+                 "sre", "devops", "platform", "cloud", "architect", "programmer", "gpu",
+                 "后端", "服务端", "后台", "架构", "基础架构", "运维", "分布式", "系统", "平台", "全栈", "前端",
+                 "客户端", "开发工程师", "软件工程师", "测试", "网络", "编译", "集群", "高性能", "安全工程", "研发",
+                 "工程师", "开发", "程序", "技术类", "逆向", "安全")),
+]]
 
-LEVEL_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("Junior", ("实习", "intern", "校招", "应届", "管培", "初级", "junior", "new grad")),
-    ("Lead/Staff", ("负责人", "总监", "leader", "lead", "staff", "principal", "首席", "主管", "架构师", "head of")),
-    ("Senior", ("高级", "资深", "专家", "senior", "sr.")),
-]
+LEVEL_RULES: list[tuple[str, re.Pattern]] = [(lv, _word_re(w)) for lv, w in [
+    ("Junior", ("junior", "jr", "intern", "internship", "graduate", "new grad", "entry level", "entry-level",
+                "trainee", "apprentice", "实习", "校招", "应届", "管培", "初级")),
+    ("Lead/Staff", ("lead", "leader", "staff", "principal", "head", "director", "vp", "chief",
+                    "负责人", "总监", "首席", "主管", "架构师")),
+    ("Senior", ("senior", "sr", "expert", "高级", "资深", "专家")),
+    ("Mid", ("mid", "mid-level", "mid level", "intermediate", "中级")),
+]]
+
+_REMOTE = _word_re(("remote", "work from home", "wfh", "fully remote", "远程"))
+_HYBRID = _word_re(("hybrid", "混合办公"))
+_ONSITE = _word_re(("on-site", "onsite", "on site", "in-office", "in office", "驻场"))
 
 
 def is_non_tech(title: str) -> bool:
-    t = f" {title.lower()}"
-    return any(w in t for w in NON_TECH)
+    t = title.lower()
+    return bool(NON_TECH.search(t)) and not TECH_ROLE.search(t)
 
 
 def classify_track(title: str, category: str | None = None) -> str:
     if is_non_tech(title):
         return "Other"
     text = f"{title} {category or ''}".lower()
-    for track, words in TRACK_RULES:
-        if any(w in text for w in words):
+    for track, pattern in TRACK_RULES:
+        if pattern.search(text):
             return track
     return "Other"
 
@@ -217,18 +301,31 @@ def classify_track(title: str, category: str | None = None) -> str:
 def classify_level(title: str) -> str:
     """Рівень лише з назви посади: в описі слова «高级» чи «实习» трапляються з іншого приводу."""
     text = title.lower()
-    for level, words in LEVEL_RULES:
-        if any(w in text for w in words):
+    for level, pattern in LEVEL_RULES:
+        if pattern.search(text):
             return level
+    return "Not Specified"
+
+
+def classify_work_model(title: str, description: str) -> str:
+    """Формат роботи за прямою згадкою; «hybrid» важить більше за «remote» («hybrid/remote»)."""
+    text = f"{title} {description or ''}".lower()
+    if _HYBRID.search(text):
+        return "Hybrid"
+    if _REMOTE.search(text):
+        return "Remote"
+    if _ONSITE.search(text):
+        return "On-site"
     return "Not Specified"
 
 
 def extract(title: str, description: str, category: str | None = None) -> dict:
     """Поля факту вакансії, які раніше давала модель. Назва лишається мовою оригіналу."""
+    description = description or ""
     track = classify_track(title, category)
     return {
         "experience_level": classify_level(title),
-        "work_model": "Not Specified",
+        "work_model": classify_work_model(title, description),
         "track": track,
         "extraction_method": METHOD,
         "prompt_version": KEYWORDS_VERSION,
