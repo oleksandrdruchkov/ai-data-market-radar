@@ -27,7 +27,7 @@ different units can share one chart without being mixed.
 | Line | What it measures | Source |
 |---|---|---|
 | **Autonomy of the leading model** | METR 50% time horizon $T_{50}$: the length of a software task (in hours of expert human work) that the best model completes in half of attempts. Running maximum over release dates. | METR, via Epoch AI (CC BY 4.0) |
-| **AI specialists** | Share of job postings that mention AI; one line for all countries of the tracker (geometric mean of each country's growth, equal weight). China is not in the tracker. | Indeed Hiring Lab AI Tracker (CC BY 4.0) |
+| **AI specialists** | Share of job postings that mention AI; one line for all countries of the tracker (geometric mean of each country's growth, equal weight). China is not in the tracker: separately, outside the line, the card shows the number of open postings on the career pages of leading Chinese labs (DeepSeek, Moonshot, Zhipu, MiniMax) — a count of the companies' own postings, not a market share. | Indeed Hiring Lab AI Tracker (CC BY 4.0) |
 | **Money** | Quarterly capital expenditure of Amazon, Alphabet, Meta and Microsoft. | SEC EDGAR filings |
 
 **After the last METR measurement** (METR stopped updating in 2026) the autonomy line continues
@@ -154,6 +154,7 @@ docs/         technical notes and archive
 |---|---|---|
 | METR time horizons, Epoch Capabilities Index | Epoch AI | CC BY 4.0 |
 | AI job postings share | Indeed Hiring Lab | CC BY 4.0 |
+| Open postings at Chinese labs | career pages of DeepSeek, Moonshot, Zhipu (MokaHR), MiniMax (Feishu) | public pages, counter only |
 | Job postings and counts | Adzuna API | API terms |
 | Capital expenditure, filings | SEC EDGAR | public data |
 | Rates and spreads | FRED (St. Louis Fed) | per series; ICE/Moody's shown as scores only |
