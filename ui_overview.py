@@ -398,13 +398,17 @@ def render_cn_labs(sb, is_en: bool) -> None:
             text=[f"{v:.0f}" for v in wide[lab]] if len(wide) <= 6 else None,
             textposition="inside", insidetextanchor="middle", textfont=dict(size=11),
             hovertemplate=f"<b>{lab}</b>: %{{y:.0f}}<br>%{{x}}<extra></extra>"))
-    for xi, t in zip(x, total):
-        fig.add_annotation(x=xi, y=t, yshift=10, showarrow=False, text=f"<b>{t:.0f}</b>",
+    # Позиція підпису - номер стовпчика: рядок «16.11» на осі категорій Plotly читає як число 16.11
+    # і ставить суму далеко праворуч, розтягуючи вісь.
+    for i, t in enumerate(total):
+        fig.add_annotation(x=i, y=t, yshift=10, showarrow=False, text=f"<b>{t:.0f}</b>",
                            font=dict(size=11, color="#0f172a"))
     fig.update_layout(barmode="stack", bargap=0.35 if len(wide) > 1 else 0.6, height=340,
                       paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
                       margin=dict(l=40, r=8, t=24, b=36), uniformtext=dict(minsize=9, mode="hide"),
-                      xaxis=dict(type="category", tickfont=dict(size=10), automargin=False),
+                      # кілька стовпчиків не розтягуються на всю ширину: вісь завжди щонайменше на 7 місць
+                      xaxis=dict(type="category", tickfont=dict(size=10), automargin=False,
+                                 range=[-0.6, max(len(wide), 7) - 0.4]),
                       font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
                       showlegend=False,
                       yaxis=dict(gridcolor="#f1f5f9", automargin=False, range=[0, float(total.max()) * 1.14]))
