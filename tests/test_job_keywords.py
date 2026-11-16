@@ -45,7 +45,7 @@ def test_track_and_level():
 def test_extract_shape():
     x = kw.extract("高级算法工程师", "要求：熟悉PyTorch，了解大模型", "深度学习")
     assert x["track"] == "Machine Learning" and x["experience_level"] == "Senior"
-    assert x["extraction_method"] == "keywords:kw_v1" and x["work_model"] == "Not Specified"
+    assert x["extraction_method"] == kw.METHOD and x["work_model"] == "Not Specified"
     assert {s.name for s in x["_skills"]} == {"PyTorch", "LLM", "Deep Learning"}
     assert all(s.category in kw.Skill.model_fields or True for s in x["_skills"])
     from collectors._jobs_common import SKILL_CATEGORIES
@@ -69,3 +69,38 @@ def test_go_and_quantization_false_positives():
     assert "Go" in names("熟悉Go或Rust") and "Go" in names("Go, Python")
     assert "Model Quantization" not in names("量化交易策略研究")          # кількісна торгівля
     assert "Model Quantization" in names("模型量化与蒸馏")
+
+
+def test_english_titles_whole_words():
+    assert kw.classify_track("Senior Data Engineer (Python, AWS)") == "Data Engineering"
+    assert kw.classify_track("AI Data Engineer") == "Data Engineering"            # інженерія даних раніше за ML
+    assert kw.classify_track("Machine Learning Engineer") == "Machine Learning"
+    assert kw.classify_track("Data Scientist") == "Machine Learning"
+    assert kw.classify_track("Analytics Engineer") == "Analytics Engineering"
+    assert kw.classify_track("BI Developer") == "Analytics Engineering"
+    assert kw.classify_track("Python Developer") == "Backend"
+    assert kw.classify_track("Salesforce Data Engineer") == "Data Engineering"    # «sales» - не «Salesforce»
+    assert kw.classify_track("Data Engineer - Finance") == "Data Engineering"     # технічна роль важить більше
+    assert kw.classify_track("Marketing Manager") == "Other"
+    assert kw.classify_level("International Data Engineer") == "Not Specified"    # «intern» - не «international»
+    assert kw.classify_level("Data Engineering Intern") == "Junior"
+    assert kw.classify_level("Sr. Data Engineer") == "Senior"
+    assert kw.classify_level("Lead Data Engineer") == "Lead/Staff"
+    assert kw.classify_level("Leading Edge Data Engineer") == "Not Specified"
+    assert kw.classify_level("Mid-Level Python Engineer") == "Mid"
+
+
+def test_english_data_stack_and_work_model():
+    text = ("We need a Data Engineer with Python, SQL, PySpark and Databricks on Azure. Experience with dbt, "
+            "Snowflake, Power BI, CI/CD and data pipelines. C# or .NET is a plus. Hybrid working, 2 days in office.")
+    x = kw.extract("Data Engineer", text)
+    got = {s.name for s in x["_skills"]}
+    assert {"Python", "SQL", "PySpark", "Databricks", "Azure", "dbt", "Snowflake", "Power BI", "CI/CD",
+            "Data Pipelines", "C#"} <= got
+    assert "Spark" not in got                                    # «PySpark» - окрема навичка
+    assert x["work_model"] == "Hybrid" and x["track"] == "Data Engineering"
+    assert kw.classify_work_model("Data Engineer (Remote)", "") == "Remote"
+    assert kw.classify_work_model("Data Engineer", "on-site in London") == "On-site"
+    assert kw.classify_work_model("Data Engineer", "remotely operated vehicles") == "Not Specified"
+    assert "Oracle" not in names("an oracle of wisdom") and "Oracle" in names("Oracle and SQL Server")
+    assert "Glue" not in names("the glue between teams") and "AWS Glue" in names("AWS Glue jobs")

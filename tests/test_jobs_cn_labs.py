@@ -31,7 +31,7 @@ def test_fact_is_china_and_keyword_based():
     f = cn_vacancy_fact(p, "MiniMax")
     assert f["region"] == "China" and f["country_code"] == "CN" and f["company"] == "MiniMax"
     assert f["title"] == f["title_original"] == "大模型算法工程师"            # без перекладу
-    assert f["track"] == "Machine Learning" and f["extraction_method"] == "keywords:kw_v1"
+    assert f["track"] == "Machine Learning" and f["extraction_method"].startswith("keywords:kw_v")
     assert {s.name for s in f["_skills"]} >= {"LLM", "Pre-training", "PyTorch", "CUDA"}
     assert f["event_date"] == "2025-11-13"
 

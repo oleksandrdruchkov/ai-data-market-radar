@@ -7,6 +7,7 @@ collectors/_jobs_common.py
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -84,6 +85,11 @@ class JobsCollector(BaseCollector):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self._skill_cache: dict[str, int] = {}
+        # Вакансія, якої не видно в джерелі довше за стільки днів, перестає рахуватись активною.
+        # Потрібно там, де джерело не дає повного списку (Adzuna віддає лише першу сторінку пошуку)
+        # або дало неповний. Побачена знову - відкривається. VACANCY_STALE_DAYS=0 вимикає правило.
+        days = int(os.getenv("VACANCY_STALE_DAYS", "30"))
+        self.stale_after_days = days if days > 0 else None
 
     # ---------- допоміжне для parse() ----------
 
@@ -124,7 +130,10 @@ class JobsCollector(BaseCollector):
         if not rows:
             raise RuntimeError("upsert вакансії не повернув рядок")
         vacancy_id = rows[0].get("vacancy_id") or rows[0].get("id")
+        self.write_skills(vacancy_id, skills)
 
+    def write_skills(self, vacancy_id: int, skills) -> None:
+        """Навички вакансії = рівно цей список (зайві зв'язки прибираються)."""
         skill_ids = sorted({self.resolve_skill_id(s.name, s.category) for s in skills})
         if skill_ids:
             self.db.upsert("bridge_vacancy_skills",
