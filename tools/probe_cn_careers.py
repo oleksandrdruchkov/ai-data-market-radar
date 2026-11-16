@@ -1,13 +1,19 @@
 """
 tools/probe_cn_careers.py
-Діагностика: на яких платформах сторінки найму китайських лабораторій-лідерів (лідери за ECI).
-Лише читання публічних сторінок (GET), без запису в базу і без жодних дій з акаунтами.
+Діагностика сторінок найму китайських лабораторій-лідерів (лідери за ECI) - лише читання,
+без запису в базу і без жодних дій з акаунтами кандидатів.
 
-Що робить для кожної адреси зі списку:
-  1) GET сторінки: код відповіді, кінцева адреса, заголовок;
-  2) шукає в HTML згадки платформ найму (MokaHR, Feishu, Beisen тощо) і посилання зі словами
-     career / join / job / 招聘 / 加入;
-  3) те саме - у перших скриптах сторінки з того самого сайту (посилання часто зашиті в скрипт).
+Що вже відомо (запуск 2026-11-16):
+  Moonshot (Kimi)  MokaHR: app.mokahr.com/social-recruitment/moonshot/148506 (як DeepSeek)
+  MiniMax          Feishu: vrfi1sk8a0.jobs.feishu.cn/379481
+  Zhipu (Z.ai)     невідомо - шукаємо тут
+  Alibaba          загальний портал усієї корпорації (talent.alibaba.com), не лабораторії
+
+Цей запуск:
+  1) Feishu (MiniMax): чи віддає сторінка або публічний запит списку загальну кількість вакансій.
+     Викликаються ЛИШЕ: сторінка, видача токена захисту форми і пошук вакансій (читання).
+  2) Zhipu: слова «招聘 / 加入 / join / career» у HTML сайту з контекстом.
+  3) MokaHR (Moonshot): лічильник jobStats і розбивка за категоріями.
 
 Запуск: python -m tools.probe_cn_careers
 """
@@ -16,97 +22,136 @@ from __future__ import annotations
 
 import re
 import sys
-from urllib.parse import urljoin, urlparse
+import json
+import html as htmllib
 
 import requests
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/130.0 Safari/537.36 MarketRadarBot/2.0")
 HEADERS = {"User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
-TIMEOUT = 25
-MAX_SCRIPTS = 12
-
-SEEDS: dict[str, list[str]] = {
-    "Moonshot": [
-        "https://www.moonshot.cn/", "https://www.moonshot.ai/", "https://www.moonshot.cn/jobs",
-        "https://www.moonshot.cn/careers", "https://www.kimi.com/",
-        "https://moonshot.jobs.feishu.cn/", "https://moonshot.jobs.feishu.cn/index",
-        "https://app.mokahr.com/apply/moonshot", "https://app.mokahr.com/social-recruitment/moonshot",
-    ],
-    "Zhipu": [
-        "https://www.zhipuai.cn/", "https://www.zhipuai.cn/joinus", "https://www.zhipuai.cn/join",
-        "https://z.ai/", "https://bigmodel.cn/",
-        "https://zhipu-ai.jobs.feishu.cn/", "https://zhipu-ai.jobs.feishu.cn/index",
-        "https://zhipuai.jobs.feishu.cn/index",
-        "https://app.mokahr.com/apply/zhipuai", "https://app.mokahr.com/apply/zhipu",
-    ],
-    "MiniMax": [
-        "https://www.minimaxi.com/", "https://www.minimax.io/", "https://www.minimaxi.com/careers",
-        "https://www.minimaxi.com/join", "https://vrfi1sk8a0.jobs.feishu.cn/index",
-        "https://minimax.jobs.feishu.cn/index", "https://app.mokahr.com/apply/minimax",
-    ],
-    "Alibaba": [
-        "https://talent.alibaba.com/", "https://talent-holding.alibaba.com/",
-        "https://careers.aliyun.com/", "https://talent.alibaba.com/off-campus/position-list?lang=zh",
-    ],
-}
-
-ATS_RE = re.compile(
-    r"""(?:https?:)?//[^\s"'<>\\)]*?(?:mokahr\.com|jobs\.feishu\.cn|jobs\.larksuite\.com|zhiye\.com|beisen\.com|"""
-    r"""hotjob\.cn|dayee\.com|lever\.co|greenhouse\.io|ashbyhq\.com|workable\.com|zhipin\.com|liepin\.com|"""
-    r"""talent\.[a-z-]+\.com|careers?\.[a-z-]+\.(?:com|cn|ai|io))[^\s"'<>\\)]*""", re.I)
-HREF_RE = re.compile(r"""href\s*=\s*["']([^"']+)["'][^>]*>([^<]{0,60})""", re.I)
-WORD_RE = re.compile(r"career|join|job|recruit|hiring|招聘|加入|诚聘|人才", re.I)
-SCRIPT_RE = re.compile(r"""<script[^>]+src\s*=\s*["']([^"']+)["']""", re.I)
-TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+TIMEOUT = 40
 
 
-def get(url: str) -> requests.Response | None:
+def show(label: str, text: str, n: int = 600) -> None:
+    print(f"    {label}: {text[:n]!r}")
+
+
+def feishu(host: str, path: str) -> None:
+    print(f"\n===== Feishu: {host}/{path} =====")
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    base = f"https://{host}"
+    for url in (f"{base}/{path}", f"{base}/index"):
+        try:
+            r = s.get(url, timeout=TIMEOUT)
+        except Exception as ex:
+            print(f"  GET {url}: {type(ex).__name__}: {str(ex)[:120]}")
+            continue
+        body = r.text or ""
+        print(f"  GET {url}: {r.status_code}, {len(body)} символів, cookies: {sorted(s.cookies.keys())}")
+        for key in ("job_post_list", "jobPostList", "count", "total", "__INITIAL_STATE__", "__NEXT_DATA__",
+                    "portal_type", "website_id", "websiteId", "csrf", "_signature", "job_post_count"):
+            for m in list(re.finditer(re.escape(key), body))[:2]:
+                show(f"«{key}»", body[max(0, m.start() - 80): m.start() + 220], 300)
+        for src in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", body)[:20]:
+            print(f"    script: {src[:160]}")
+    # токен захисту форми (його просить сам сайт перед будь-яким запитом)
+    token = None
     try:
-        return requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
-    except Exception as ex:                                    # мережа, сертифікат, тайм-аут
-        print(f"    ! {type(ex).__name__}: {str(ex)[:140]}")
-        return None
+        r = s.post(f"{base}/api/v1/csrf/token", json={"portal_entrance": 1}, timeout=TIMEOUT,
+                   headers={"website-path": path, "Referer": f"{base}/{path}", "Origin": base})
+        print(f"  POST csrf/token: {r.status_code}")
+        show("тіло", r.text, 300)
+        token = s.cookies.get("atsx-csrf-token") or (r.json().get("data") or {}).get("token")
+        print(f"    cookies: {sorted(s.cookies.keys())}; token: {'є' if token else 'немає'}")
+    except Exception as ex:
+        print(f"  csrf/token: {type(ex).__name__}: {str(ex)[:160]}")
+    from urllib.parse import unquote
+    hdr = {"website-path": path, "Referer": f"{base}/{path}", "Origin": base, "portal-channel": "office",
+           "portal-platform": "pc", "Content-Type": "application/json"}
+    if token:
+        hdr["x-csrf-token"] = unquote(token)
+    body = {"keyword": "", "limit": 10, "offset": 0, "job_category_id_list": [], "tag_id_list": [],
+            "location_code_list": [], "subject_id_list": [], "recruitment_id_list": [],
+            "portal_type": 6, "job_function_id_list": [], "storefront_id_list": [], "portal_entrance": 1}
+    for q in ("?keyword=&limit=10&offset=0&portal_type=6&portal_entrance=1",
+              "?keyword=&limit=10&offset=0&portal_type=2&portal_entrance=1", ""):
+        try:
+            r = s.post(f"{base}/api/v1/search/job/posts{q}", json={**body, "portal_type": 2 if "type=2" in q else 6},
+                       headers=hdr, timeout=TIMEOUT)
+            print(f"  POST search/job/posts{q}: {r.status_code}")
+            try:
+                j = r.json()
+                data = j.get("data") or {}
+                print(f"    code={j.get('code')} message={j.get('message')!r} ключі data: {sorted(data)[:12]}")
+                print(f"    count={data.get('count')} у списку={len(data.get('job_post_list') or [])}")
+                for job in (data.get("job_post_list") or [])[:3]:
+                    print("    вакансія:", json.dumps({k: job.get(k) for k in
+                          ("id", "title", "publish_time", "job_category", "recruit_type", "city_info")},
+                          ensure_ascii=False)[:400])
+            except ValueError:
+                show("не JSON", r.text, 300)
+        except Exception as ex:
+            print(f"  search{q}: {type(ex).__name__}: {str(ex)[:160]}")
 
 
-def scan(text: str) -> set[str]:
-    return {m.group(0).rstrip(".,;") for m in ATS_RE.finditer(text)}
+def zhipu() -> None:
+    print("\n===== Zhipu: слова про найм у HTML =====")
+    for url in ("https://www.zhipuai.cn/zh", "https://www.zhipuai.cn/en", "https://www.zhipuai.cn/zh/joinus",
+                "https://www.zhipuai.cn/zh/join-us", "https://www.zhipuai.cn/zh/careers",
+                "https://www.zhipuai.cn/zh/company/join", "https://zhipu.jobs.feishu.cn/index",
+                "https://zhipuai.zhiye.com/", "https://app.mokahr.com/apply/zhipuhuazhang",
+                "https://app.mokahr.com/apply/bigmodel", "https://app.mokahr.com/apply/zai"):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        except Exception as ex:
+            print(f"  GET {url}: {type(ex).__name__}: {str(ex)[:120]}")
+            continue
+        body = r.text or ""
+        title = re.search(r"<title[^>]*>(.*?)</title>", body, re.S)
+        print(f"  GET {url}: {r.status_code} -> {r.url}, {len(body)} символів, "
+              f"title: {(title.group(1).strip()[:60] if title else '-')}")
+        seen = set()
+        for m in re.finditer(r"招聘|加入我们|加入智谱|诚聘|社会招聘|校园招聘|join[-_ ]?us|career|jobs\.|mokahr|feishu|zhiye|hotjob",
+                             body, re.I):
+            ctx = re.sub(r"\s+", " ", body[max(0, m.start() - 110): m.start() + 170])
+            key = ctx[90:150]
+            if key in seen:
+                continue
+            seen.add(key)
+            show(m.group(0), ctx, 280)
+            if len(seen) >= 14:
+                break
 
 
-def probe(url: str) -> None:
-    print(f"\n  GET {url}")
-    r = get(url)
-    if r is None:
+def moka(org: str) -> None:
+    print(f"\n===== MokaHR: {org} =====")
+    try:
+        r = requests.get(f"https://app.mokahr.com/social-recruitment/{org}", headers=HEADERS, timeout=TIMEOUT)
+    except Exception as ex:
+        print(f"  {type(ex).__name__}: {str(ex)[:120]}")
         return
-    body = r.text or ""
-    title = TITLE_RE.search(body)
-    print(f"    {r.status_code}  -> {r.url}  ({len(body)} символів)  "
-          f"title: {(title.group(1).strip()[:80] if title else '-')}")
-    found = scan(body)
-    links = {(urljoin(r.url, h), t.strip()) for h, t in HREF_RE.findall(body)
-             if WORD_RE.search(h) or WORD_RE.search(t)}
-    host = urlparse(r.url).netloc
-    scripts = [urljoin(r.url, s) for s in SCRIPT_RE.findall(body)]
-    scripts = [s for s in scripts if urlparse(s).netloc.split(".")[-2:] == host.split(".")[-2:]][:MAX_SCRIPTS]
-    for s in scripts:
-        rs = get(s)
-        if rs is not None and rs.status_code == 200:
-            found |= scan(rs.text or "")
-    for f in sorted(found)[:25]:
-        print(f"    платформа: {f[:200]}")
-    for h, t in sorted(links)[:15]:
-        print(f"    посилання: {h[:160]}  [{t[:40]}]")
-    # ознаки вбудованих даних списку вакансій
-    for key in ("jobStats", "aesIv", "job_post_list", "jobPostList", "positionList", "window.__INITIAL"):
-        if key in body:
-            print(f"    у сторінці є ключ: {key}")
+    print(f"  {r.status_code} -> {r.url}")
+    for blob in re.findall(r"""=\s*["']({&quot;.*?})["']""", r.text, re.S):
+        try:
+            data = json.loads(htmllib.unescape(blob))
+        except ValueError:
+            continue
+        if isinstance(data, dict) and "jobStats" in data:
+            print("  jobStats:", json.dumps(data.get("jobStats"), ensure_ascii=False)[:1500])
+            print("  вбудовано вакансій:", len(data.get("jobs") or []), "| ключі:", sorted(data)[:40])
+            for j in (data.get("jobs") or [])[:3]:
+                print("   ", json.dumps({k: j.get(k) for k in ("id", "title", "status", "openedAt", "zhineng",
+                                                                 "commitment", "department")}, ensure_ascii=False)[:300])
 
 
 def main() -> int:
-    for lab, urls in SEEDS.items():
-        print(f"\n===== {lab} =====")
-        for u in urls:
-            probe(u)
+    feishu("vrfi1sk8a0.jobs.feishu.cn", "379481")
+    feishu("moonshot.jobs.feishu.cn", "")
+    zhipu()
+    moka("moonshot")
+    moka("high-flyer")
     return 0
 
 
