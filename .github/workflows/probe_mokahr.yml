@@ -29,6 +29,9 @@ jobs:
       - name: Probe - сторінки найму китайських лабораторій
         if: ${{ inputs.target == 'cn_careers' }}
         run: python -m tools.probe_cn_careers
+      - name: Dry run - відкриті вакансії китайських лабораторій (без запису)
+        if: ${{ !cancelled() && inputs.target == 'cn_careers' }}
+        run: python -m collectors.cn_lab_jobs --dry-run
       - name: Probe MokaHR
         if: ${{ inputs.target != 'cn_careers' }}
         run: python -m tools.probe_mokahr

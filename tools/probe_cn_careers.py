@@ -146,12 +146,39 @@ def moka(org: str) -> None:
                                                                  "commitment", "department")}, ensure_ascii=False)[:300])
 
 
+def zhipu_chunks() -> None:
+    """Куди ведуть кнопки «社会招聘 / 校园招聘» на zhipuai.cn/zh/joinus: адреси зі скриптів сторінки."""
+    print("\n===== Zhipu: адреси у скриптах сторінки joinus =====")
+    base = "https://www.zhipuai.cn"
+    try:
+        page = requests.get(f"{base}/zh/joinus", headers=HEADERS, timeout=TIMEOUT).text
+    except Exception as ex:
+        print(f"  {type(ex).__name__}: {str(ex)[:120]}")
+        return
+    chunks = re.findall(r'''src=["']([^"']*_next/static/chunks/[^"']+\.js)["']''', page)
+    chunks = sorted(set(chunks), key=lambda c: ("joinus" not in c, c))[:25]
+    urls: dict[str, str] = {}
+    for c in chunks:
+        try:
+            js = requests.get(base + c if c.startswith("/") else c, headers=HEADERS, timeout=TIMEOUT).text
+        except Exception as ex:
+            print(f"  {c[-50:]}: {type(ex).__name__}")
+            continue
+        for m in re.finditer(r'''https?://[^\s"'`<>\\)]+''', js):
+            u = m.group(0)
+            if re.search(r"job|career|recruit|hire|hr|moka|feishu|zhiye|zhaopin|beisen|talent|campus", u, re.I):
+                urls.setdefault(u, c[-40:])
+        if "joinus" in c:
+            for m in re.finditer(r"window\.open\(|social_recruitment|campus_recruitment", js):
+                show("joinus js", js[max(0, m.start() - 200): m.start() + 300], 500)
+    for u, c in sorted(urls.items())[:40]:
+        print(f"    {u[:200]}   [{c}]")
+    for m in re.finditer(r'''https?:\\*/\\*/[^\s"'`<>)]{0,80}(?:job|career|recruit|moka|feishu|zhiye|hotjob|talent)[^\s"'`<>)]{0,120}''', page, re.I):
+        print(f"    у HTML: {m.group(0)[:220]}")
+
+
 def main() -> int:
-    feishu("vrfi1sk8a0.jobs.feishu.cn", "379481")
-    feishu("moonshot.jobs.feishu.cn", "")
-    zhipu()
-    moka("moonshot")
-    moka("high-flyer")
+    zhipu_chunks()
     return 0
 
 

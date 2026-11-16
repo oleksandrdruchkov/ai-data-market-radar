@@ -82,6 +82,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m collectors.indeed_ai_tracker
 
+      # Сторінки найму DeepSeek, Moonshot (MokaHR) і MiniMax (Feishu): лише лічильник, без Gemini.
+      - name: People - відкриті вакансії китайських лабораторій (sql/029)
+        if: ${{ !cancelled() }}
+        run: python -m collectors.cn_lab_jobs
+
       - name: Bubble - Adzuna counts (ML vs розробники)
         if: ${{ !cancelled() }}
         env:
