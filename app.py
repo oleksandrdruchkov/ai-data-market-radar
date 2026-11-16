@@ -237,11 +237,17 @@ def load_capability_data():
 
 @st.cache_data(ttl=120)
 def load_leader_actions():
-    """Коло дій моделей-лідерів: усі розрахунки - у SQL-представленнях (sql/005_leader_actions.sql).
-    Повертає (команда, моделі, записи на підтвердженні, текст помилки)."""
+    """Коло дій моделей-лідерів: усі розрахунки - у SQL-представленнях (sql/005, 026, 027).
+    Повертає (команда, моделі, записи на підтвердженні, текст помилки).
+    Якщо є місячні представлення (sql/027), команда й моделі мають колонку period - тоді на
+    сторінці можна вибрати попередній місяць; без них - лише поточний стан."""
     try:
-        team = pd.DataFrame(supabase.table("v_leader_action_circle").select("*").execute().data)
-        models = pd.DataFrame(supabase.table("v_leader_action_models").select("*").execute().data)
+        try:
+            team = pd.DataFrame(supabase.table("v_leader_action_circle_monthly").select("*").execute().data)
+            models = pd.DataFrame(supabase.table("v_leader_action_models_monthly").select("*").execute().data)
+        except Exception:   # міграцію 027 ще не застосовано
+            team = pd.DataFrame(supabase.table("v_leader_action_circle").select("*").execute().data)
+            models = pd.DataFrame(supabase.table("v_leader_action_models").select("*").execute().data)
         pending = pd.DataFrame(supabase.table("v_leader_action_pending").select("*").execute().data)
         return team, models, pending, None
     except Exception as ex:
@@ -1008,6 +1014,27 @@ else:
     def _unit(u):
         return (UNITS_EN if is_en else UNITS_UA).get(u, u)
 
+    # Період (sql/027): на колі - останній місяць, попередні - у випадаючому меню.
+    # Минулий місяць = ті самі підтверджені записи й правила, але лише моделі, випущені до його кінця.
+    MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+                 "October", "November", "December"]
+    MONTHS_UA = ["Січень", "Лютий", "Березень", "Квітень", "Травень", "Червень", "Липень", "Серпень",
+                 "Вересень", "Жовтень", "Листопад", "Грудень"]
+    is_past_period = False
+    if "period" in df_lead_team.columns:
+        circ_periods = sorted(df_lead_team["period"].astype(str).unique(), reverse=True)
+
+        def _period_label(p):
+            name = f"{(MONTHS_EN if is_en else MONTHS_UA)[int(p[5:7]) - 1]} {p[:4]}"
+            return name + ((" · latest" if is_en else " · останній") if p == circ_periods[0] else "")
+
+        selected_period = st.selectbox("Period" if is_en else "Період", circ_periods, index=0,
+                                       format_func=_period_label, key="circle_period")
+        is_past_period = selected_period != circ_periods[0]
+        df_lead_team = (df_lead_team[df_lead_team["period"].astype(str) == selected_period]
+                        .sort_values(["n_models", "latest_release"], ascending=False).reset_index(drop=True))
+        df_lead_models = df_lead_models[df_lead_models["period"].astype(str) == selected_period]
+
     # Частоти з різними одиницями рахунку не усереднюються (sql/026): головне коло - одиниця,
     # за якою є найбільше лідерів; решта одиниць - окремими рядками в підказці.
     team = df_lead_team.iloc[0]
@@ -1112,13 +1139,26 @@ else:
     )
     show_chart(fig_circ)
 
+    others = "; ".join(f"{t['team']} — {_pct(t['out_share'])} ({_unit(t['unit'])})"
+                       for _, t in df_lead_team.iloc[1:].iterrows())
     st.caption(
-        (f"**Team:** {team['team']}. Real-use data published by the developers; trap tests are not used. "
-         "Actions were classified by the developers' model-based monitors. Hover over a segment for details.")
+        (f"**Team:** {team['team']}. **Counted in:** {_unit(main_unit)}. "
+         + (f"**Other units, not averaged in:** {others}. " if others else "")
+         + "Real-use data published by the developers; trap tests are not used. "
+         "Actions were classified by the developers' model-based monitors. Tap or hover over a segment for details.")
         if is_en else
-        (f"**Команда:** {team['team']}. Дані реальної роботи, опубліковані розробниками; тести-пастки не використовуються. "
-         "Дії класифікували моделі-монітори розробників. Наведіть на сегмент, щоб побачити деталі.")
+        (f"**Команда:** {team['team']}. **Одиниця рахунку:** {_unit(main_unit)}. "
+         + (f"**Інші одиниці, не усереднюються:** {others}. " if others else "")
+         + "Дані реальної роботи, опубліковані розробниками; тести-пастки не використовуються. "
+         "Дії класифікували моделі-монітори розробників. Торкніться сегмента або наведіть на нього, щоб побачити деталі.")
     )
+    if is_past_period:
+        st.caption(
+            "Past month: leading models released by the end of that month, recalculated from today's verified "
+            "records under today's rules. It is not a snapshot of what the page showed at that time."
+            if is_en else
+            "Минулий місяць: моделі-лідери, випущені до кінця цього місяця, перераховано за сьогоднішніми "
+            "підтвердженими записами й сьогоднішніми правилами. Це не знімок того, що сторінка показувала тоді.")
 
 if not df_lead_pending.empty:
     st.caption(

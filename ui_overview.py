@@ -298,6 +298,33 @@ def load_research(_sb) -> tuple[pd.DataFrame | None, str | None, str | None]:
         return None, str(ex)[:300], None
 
 
+def research_quarters(df: pd.DataFrame, is_en: bool) -> tuple[pd.DataFrame, list[str]]:
+    """Квартальні частки (% статей ШІ) за показниками та підписи кварталів від старого до нового.
+    Неповний квартал (менше трьох місяців або оцінка) позначено зірочкою."""
+    df = df.copy()
+    df["q"] = df["period_start"].dt.to_period("Q")
+    agg = df.groupby(["q", "metric_id"])[["numerator", "denominator"]].sum()
+    agg["pct"] = 100 * agg["numerator"] / agg["denominator"]
+    pct = agg["pct"].unstack("metric_id")
+    group_cols = [c for c in pct.columns if c.startswith("arxiv_group_")]
+    pct = pct.dropna(subset=group_cols, how="all") if group_cols else pct.iloc[0:0]
+    anchor = df[df["metric_id"].str.startswith("arxiv_group_")]
+    months_in_q = anchor.groupby("q")["period_start"].nunique()
+    partial = anchor.groupby("q")["is_estimate"].any()
+    labels = [f"{p.quarter} {_t(is_en, 'Q', 'кв')} {p.year}" + ("*" if partial.get(p) or months_in_q.get(p, 3) < 3 else "")
+              for p in pct.index]
+    return pct, labels
+
+
+def _wrap(text: str) -> str:
+    """Довгий підпис стовпчика - у два рядки, перенос біля середини."""
+    words = text.split()
+    if len(words) < 3:
+        return text
+    best = min(range(1, len(words)), key=lambda i: abs(len(" ".join(words[:i])) - len(" ".join(words[i:]))))
+    return " ".join(words[:best]) + "<br>" + " ".join(words[best:])
+
+
 def render_research(sb, is_en: bool) -> None:
     st.markdown("<div style='font-weight:800; font-size:1.05rem; color:#0f172a; margin:6px 0 2px;'>"
                 + _t(is_en, "What AI research is aimed at: growing autonomy or human oversight",
@@ -312,63 +339,82 @@ def render_research(sb, is_en: bool) -> None:
                    "Історія збирається (близько 10 місяців за щоденний запуск)."))
         return
 
-    as_share = st.toggle(_t(is_en, "Composition in %", "Склад у %"), value=False, key="research_share")
-    st.caption(_t(is_en, "% of the bar" if as_share else "% of AI papers on ArXiv per quarter",
-                  "% стовпчика" if as_share else "% статей ШІ на ArXiv за квартал"))
-    df["q"] = df["period_start"].dt.to_period("Q")
-    agg = df.groupby(["q", "metric_id"])[["numerator", "denominator"]].sum()
-    agg["pct"] = 100 * agg["numerator"] / agg["denominator"]
-    pct = agg["pct"].unstack("metric_id")
-    months_in_q = df[df["metric_id"] == "arxiv_group_autonomy"].groupby("q")["period_start"].nunique()
-    partial = df[df["metric_id"] == "arxiv_group_autonomy"].groupby("q")["is_estimate"].any()
-    labels = [f"{p.quarter} {_t(is_en, 'Q', 'кв')} {p.year}" + ("*" if partial.get(p) or months_in_q.get(p, 3) < 3 else "")
-              for p in pct.index]
+    pct, labels = research_quarters(df, is_en)
+    if pct.empty:
+        st.info(_t(is_en, "History is being collected (about 10 months per daily run).",
+                   "Історія збирається (близько 10 місяців за щоденний запуск)."))
+        return
+
+    # На графіку - один квартал (останній); попередні - у випадаючому меню. На телефоні
+    # два широкі стовпчики з підписами читаються, а ряд із десятка кварталів - ні.
+    options = labels[::-1]
+    c_period, c_share = st.columns([1, 1])
+    with c_period:
+        chosen = st.selectbox(_t(is_en, "Quarter", "Квартал"), options, index=0, key="research_period")
+    with c_share:
+        as_share = st.toggle(_t(is_en, "Stretch both bars to 100 %", "Розтягнути обидва стовпчики до 100 %"),
+                             value=False, key="research_share")
+    row = pct.iloc[labels.index(chosen)]
 
     fig = go.Figure()
+    shares: dict[str, float] = {}      # напрям -> % свого стовпчика (для легенди під графіком)
+    top = 0.0
     for g, (ua, en) in GROUPS.items():
         members = [k for k, v in DIRECTIONS.items() if v[3] == g and f"arxiv_share_{k}" in pct.columns]
-        height = pct.get(f"arxiv_group_{g}")
-        if height is None or not members:
+        height = row.get(f"arxiv_group_{g}")
+        if height is None or pd.isna(height) or not members:
             continue
-        raw = pct[[f"arxiv_share_{k}" for k in members]].fillna(0)
-        parts = raw.div(raw.sum(axis=1).replace(0, np.nan), axis=0).fillna(0)
+        height = float(height)
+        raw = row[[f"arxiv_share_{k}" for k in members]].fillna(0).astype(float)
+        total = float(raw.sum())
         scale = 100.0 if as_share else height
-        base = pd.Series(0.0, index=pct.index)
+        top = max(top, scale)
+        x_label = _wrap(_t(is_en, en, ua))
         for k in members:
-            seg = parts[f"arxiv_share_{k}"] * scale
+            part = float(raw[f"arxiv_share_{k}"]) / total if total > 0 else 0.0
+            shares[k] = part * 100
             d_ua, d_en = DIRECTIONS[k][0], DIRECTIONS[k][1]
             fig.add_trace(go.Bar(
-                x=labels, y=seg, base=base, offsetgroup=g, legendgroup=g,
-                name=_t(is_en, d_en, d_ua), marker_color=DIR_COLORS.get(k, "#94a3b8"), showlegend=False,
-                marker_line=dict(color="#ffffff", width=0.5),
-                customdata=np.stack([raw[f"arxiv_share_{k}"], parts[f"arxiv_share_{k}"] * 100,
-                                     height.reindex(pct.index)], axis=1),
+                x=[x_label], y=[part * scale], name=_t(is_en, d_en, d_ua),
+                marker_color=DIR_COLORS.get(k, "#94a3b8"), marker_line=dict(color="#ffffff", width=0.5),
+                text=[f"{part * 100:.0f} %"], textposition="inside", insidetextanchor="middle",
+                textfont=dict(size=11), showlegend=False,
+                customdata=[[float(raw[f"arxiv_share_{k}"]), part * 100, height]],
                 hovertemplate=(f"<b>{_t(is_en, d_en, d_ua)}</b><br>"
                                + _t(is_en, "%{customdata[0]:.2f}% of AI papers · %{customdata[1]:.0f}% of the bar",
                                     "%{customdata[0]:.2f} % статей ШІ · %{customdata[1]:.0f} % стовпчика")
                                + f"<br>{_t(is_en, en, ua)}: %{{customdata[2]:.1f}} %<extra></extra>")))
-            base = base + seg
-    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05, height=380,
+        fig.add_annotation(x=x_label, y=scale, yshift=12, showarrow=False,
+                           text=f"<b>{height:.1f} %</b> " + _t(is_en, "of AI papers", "статей ШІ"),
+                           font=dict(size=12, color="#0f172a"))
+    fig.update_layout(barmode="stack", bargap=0.3, height=400,
                       paper_bgcolor="#ffffff", plot_bgcolor="#ffffff", hovermode="closest",
-                      margin=dict(l=40, r=8, t=8, b=40),
-                      xaxis=dict(type="category", tickfont=dict(size=10), automargin=False),
+                      margin=dict(l=40, r=8, t=28, b=48),
+                      uniformtext=dict(minsize=9, mode="hide"),
+                      xaxis=dict(type="category", tickfont=dict(size=11), automargin=False),
                       font=dict(family="-apple-system, BlinkMacSystemFont, Segoe UI", color="#0f172a", size=10),
                       showlegend=False,
-                      yaxis=dict(gridcolor="#f1f5f9", ticksuffix=" %", automargin=False))
+                      yaxis=dict(gridcolor="#f1f5f9", ticksuffix=" %", automargin=False,
+                                 range=[0, top * 1.12 if top > 0 else 1]))
     show_chart(fig)
     sq = "display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 8px;vertical-align:-1px;"
     for g, (ua, en) in GROUPS.items():
         items = "".join(f"<span style='white-space:nowrap'><span style='{sq}background:{DIR_COLORS.get(k, '#94a3b8')}'></span>"
-                        f"{_t(is_en, v[1], v[0])}</span> " for k, v in DIRECTIONS.items() if v[3] == g)
+                        f"{_t(is_en, v[1], v[0])} <b>{shares[k]:.0f} %</b></span> "
+                        for k, v in DIRECTIONS.items() if v[3] == g and k in shares)
         st.markdown(f"<div style='font-size:0.72rem;color:#475569;line-height:1.7;margin:0 0 4px;'>"
                     f"<b>{_t(is_en, en, ua)}:</b>{items}</div>", unsafe_allow_html=True)
     st.caption(_t(
         is_en,
-        "Left bar of each quarter — growth of AI autonomy (features from the AI system definition, Art. 3(1) of "
-        "Regulation (EU) 2024/1689); right bar — human oversight and robustness (Art. 14, 15; formally for high-risk "
-        "systems, used here as names of research directions). Bar height counts each paper once; directions inside "
-        "are split proportionally. * — quarter not complete yet. Source: arXiv API (cs.AI, cs.LG, cs.CL, cs.RO, cs.MA).",
-        "Лівий стовпчик кварталу — зростання автономності ШІ (ознаки з визначення системи ШІ, ст. 3(1) Регламенту "
-        "ЄС 2024/1689); правий — людський нагляд і надійність (ст. 14, 15; формально стосуються систем високого "
-        "ризику, тут — назви напрямів досліджень). Висота стовпчика рахує кожну статтю один раз; напрями всередині "
-        "поділено пропорційно. * — квартал ще не завершено. Джерело: arXiv API (cs.AI, cs.LG, cs.CL, cs.RO, cs.MA)."))
+        "One quarter is shown; earlier quarters are in the menu above the chart. Left bar — growth of AI autonomy "
+        "(features from the AI system definition, Art. 3(1) of Regulation (EU) 2024/1689); right bar — human oversight "
+        "and robustness (Art. 14, 15; formally for high-risk systems, used here as names of research directions). "
+        "The number above a bar is the share of AI papers on ArXiv in that quarter (each paper counted once); the "
+        "numbers inside and in the list below are shares of the bar (directions are split proportionally). "
+        "* — quarter not complete yet. Source: arXiv API (cs.AI, cs.LG, cs.CL, cs.RO, cs.MA).",
+        "Показано один квартал; попередні — у меню над графіком. Лівий стовпчик — зростання автономності ШІ "
+        "(ознаки з визначення системи ШІ, ст. 3(1) Регламенту ЄС 2024/1689); правий — людський нагляд і надійність "
+        "(ст. 14, 15; формально стосуються систем високого ризику, тут — назви напрямів досліджень). "
+        "Число над стовпчиком — частка статей ШІ на ArXiv за квартал (кожна стаття рахується один раз); числа "
+        "всередині та в переліку під графіком — частки стовпчика (напрями поділено пропорційно). "
+        "* — квартал ще не завершено. Джерело: arXiv API (cs.AI, cs.LG, cs.CL, cs.RO, cs.MA)."))

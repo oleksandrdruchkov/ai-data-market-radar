@@ -45,7 +45,8 @@ inflows are applied to capital expenditure. This is an approximation.
 
 ### 2. Research direction: "gas" and "brakes"
 
-Every quarter two bars, as a share of all AI papers on arXiv (cs.AI, cs.LG, cs.CL, cs.RO, cs.MA):
+Two bars per quarter, as a share of all AI papers on arXiv (cs.AI, cs.LG, cs.CL, cs.RO, cs.MA).
+The chart shows the latest quarter; earlier quarters are selected in a menu:
 
 * **Growth of AI autonomy** ("gas"): autonomous task execution, adaptiveness after deployment
   (self-improvement), influence on the physical environment (robot + AI model), reasoning,
@@ -85,6 +86,10 @@ How often leading models act **beyond the bounds of their task** in **real use**
   must be found in the source, and a second, different model must agree. Records with signs of a
   test (e.g. "without safeguards", "simulated", "evaluation") are never confirmed automatically
   and go to a person.
+
+* **Periods.** The circle shows the latest month; earlier months are selected in a menu. A past
+  month uses the same verified records and rules, but only models released by the end of that
+  month (a recalculation, not a snapshot of what the page showed at that time).
 
 "Skynet" on this scale = every action is beyond bounds.
 
